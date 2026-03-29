@@ -1,0 +1,32 @@
+# Secrets
+.env
+credentials.json
+token.json
+
+# Intermediates
+.tmp/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+
+# Database files
+*.db
+*.sqlite
+
+# Node
+node_modules/
+webapp/dist/
+webapp/.vite/
+
+# macOS
+.DS_Store
+
+# Knowledge doc visuals (large generated files)
+docs/knowledge/**/visuals/*.mp4
+docs/knowledge/**/visuals/*.avi
