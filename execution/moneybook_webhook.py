@@ -1031,12 +1031,13 @@ def _process_web_image(phone: str, store_id: int, filepath: str,
             for om in old_msgs:
                 if om.get('direction') == 'bot' and (om.get('metadata') or {}).get('pending_transactions'):
                     update_message_metadata(om['id'], {'overwritten': True})
-            # Save new ConfirmCard — include display layout so UI mirrors the notebook
+            # Save new ConfirmCard — include display layout and media_url so UI mirrors the notebook
             save_web_message(store_id, 'bot', reply, quick_replies=qr,
                              metadata={
                                  'pending_transactions': txns,
                                  'page_date':            page_date,
                                  'display':              display,
+                                 'media_url':            media_url,  # for photo thumbnail in PhotoReviewCard
                              })
             log.info(f"Web image processed for store {store_id}: {len(txns)} transactions")
 

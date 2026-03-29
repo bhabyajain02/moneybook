@@ -69,7 +69,9 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" -X POST https://api.github.com/user/repos -H \"Authorization: token REDACTED\" -H \"Content-Type: application/json\" -d '{\"\"name\"\":\"\"moneybook\"\",\"\"description\"\":\"\"MoneyBook - AI-powered financial tracker for kirana stores\"\",\"\"private\"\":false}')",
       "Bash(git remote:*)",
       "Bash(git push:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(curl -s http://localhost:3000)",
+      "Bash(node --input-type=module:*)"
     ]
   }
 }

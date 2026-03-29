@@ -7,6 +7,7 @@
 
 import { useState } from 'react'
 import ConfirmCard from './ConfirmCard.jsx'
+import PhotoReviewCard from './PhotoReviewCard.jsx'
 import { deleteTransaction } from '../api.js'
 
 // ── Inline formatting ──────────────────────────────────────────
@@ -114,29 +115,32 @@ export default function MessageBubble({ msg, phone, onConfirm, onCancel, onPendi
   // Dismissed or overwritten → invisible (clean up chat)
   if (!isUser && (metadata?.dismissed || metadata?.overwritten)) return null
 
-  const pendingTxns   = !isUser && metadata?.pending_transactions
-  const confirmedTxns = !isUser && metadata?.confirmed_transactions
-  const showConfirmCard = pendingTxns?.length > 0 && onConfirm
+  const pendingTxns    = !isUser && metadata?.pending_transactions
+  const confirmedTxns  = !isUser && metadata?.confirmed_transactions
+  // Photo-sourced messages have metadata.display — use the richer PhotoReviewCard
+  const isPhotoSource  = !isUser && !!metadata?.display
+  const showPhotoReview = isPhotoSource && pendingTxns?.length > 0 && onConfirm
+  const showConfirmCard = !isPhotoSource && pendingTxns?.length > 0 && onConfirm
   const showSavedCard   = confirmedTxns?.length > 0
 
   const count   = pendingTxns?.length || 0
   const txnDate = pendingTxns?.[0]?.date
 
   return (
-    <div className={`msg-row ${direction}`}>
+    <div className={`msg-row ${direction}${showPhotoReview ? ' msg-row--photo' : ''}`}>
       <div className="bubble">
-        {/* Image attachment */}
-        {media_url && (
+        {/* Image attachment — hidden when PhotoReviewCard is shown (it has its own thumbnail) */}
+        {media_url && !showPhotoReview && (
           <img src={media_url} alt="attachment" className="bubble-image"
                onClick={() => window.open(media_url, '_blank')} />
         )}
 
-        {/* Plain text — hidden when ConfirmCard or SavedCard is shown */}
-        {body && !showConfirmCard && !showSavedCard && (
+        {/* Plain text — hidden when any card is shown */}
+        {body && !showPhotoReview && !showConfirmCard && !showSavedCard && (
           <p className="bubble-text">{formatText(body)}</p>
         )}
 
-        {/* Compact header above ConfirmCard */}
+        {/* Compact header above text-sourced ConfirmCard */}
         {showConfirmCard && (
           <p className="confirm-header-text">
             📋 <b>{count} entries found</b>{txnDate ? ` · ${txnDate}` : ''}
@@ -144,7 +148,12 @@ export default function MessageBubble({ msg, phone, onConfirm, onCancel, onPendi
           </p>
         )}
 
-        {/* Confirm card (pending, not yet saved) */}
+        {/* Photo Review Card — full-width, notebook-format (image-sourced) */}
+        {showPhotoReview && (
+          <PhotoReviewCard metadata={metadata} onConfirm={onConfirm} onCancel={onCancel} onPendingEdit={onPendingEdit} />
+        )}
+
+        {/* Confirm card — text-sourced transactions */}
         {showConfirmCard && (
           <ConfirmCard metadata={metadata} onConfirm={onConfirm} onCancel={onCancel} onPendingEdit={onPendingEdit} />
         )}

@@ -1196,10 +1196,10 @@ html, body, #root {
 .nb-row-data:hover { background: #f8fafc; }
 .nb-cell { padding: 7px 10px; color: #1e293b; vertical-align: middle; }
 .nb-cell-num { text-align: right; font-variant-numeric: tabular-nums; font-family: 'SF Mono', 'Fira Mono', monospace; color: #0f172a; font-size: 12px; white-space: nowrap; }
-.nb-type-pill { display: inline-block; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 8px; margin-right: 6px; white-space: nowrap; vertical-align: middle; }
-.nb-txn-desc { font-size: 13px; color: #1e293b; vertical-align: middle; }
-.nb-txn-tag { font-size: 11px; color: #92400e; background: #fef3c7; padding: 1px 5px; border-radius: 6px; margin-left: 5px; vertical-align: middle; }
-.nb-txn-person { font-size: 11px; color: #94a3b8; vertical-align: middle; }
+.nb-type-pill { display: inline-block; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 8px; margin-right: 4px; white-space: nowrap; vertical-align: middle; letter-spacing: 0.02em; }
+.nb-txn-desc { font-size: 11px; color: #1e293b; vertical-align: middle; line-height: 1.3; }
+.nb-txn-tag { font-size: 9.5px; color: #92400e; background: #fef3c7; padding: 1px 4px; border-radius: 5px; margin-left: 3px; vertical-align: middle; }
+.nb-txn-person { font-size: 10px; color: #94a3b8; vertical-align: middle; }
 
 /* Divider / section-header rows */
 .nb-row-divider { background: #f8fafc; }
@@ -1209,11 +1209,29 @@ html, body, #root {
 .nb-row-editing td { padding: 4px; background: #fffbeb; border-top: 1px solid #fcd34d; border-bottom: 1px solid #fcd34d; }
 
 /* Action buttons */
-.nb-btn { background: none; border: none; cursor: pointer; font-size: 14px; padding: 2px 3px; opacity: 0.4; transition: opacity 0.12s; }
+.nb-btn { background: none; border: none; cursor: pointer; font-size: 12px; padding: 1px 3px; opacity: 0.5; transition: opacity 0.12s; }
 .nb-btn:hover { opacity: 1; }
 
 /* Inline edit form */
 .inline-edit-form { padding: 8px 6px; }
+
+/* ── EditForm inside a narrow nb-cell-card (two-col layout) ── */
+.nb-cell-card .inline-edit-form { padding: 4px 2px; }
+.nb-cell-card .txn-edit-grid {
+  grid-template-columns: 1fr;   /* stack label above input */
+  gap: 3px 0;
+  margin-bottom: 5px;
+}
+.nb-cell-card .txn-edit-grid label { font-size: 9.5px; margin-bottom: 0; }
+.nb-cell-card .txn-edit-grid input,
+.nb-cell-card .txn-edit-grid select {
+  padding: 3px 5px;
+  font-size: 11px;
+}
+.nb-cell-card .txn-more-toggle { font-size: 10px; padding: 2px 0; }
+.nb-cell-card .txn-save-btn { padding: 4px 8px; font-size: 11px; }
+.nb-cell-card .txn-cancel-btn { padding: 4px 6px; font-size: 11px; }
+.nb-cell-card .txn-edit-actions { gap: 4px; flex-wrap: wrap; }
 
 /* ── Analytics Accordion ── */
 .accordion-list { display: flex; flex-direction: column; gap: 10px; padding: 12px; }
@@ -1253,3 +1271,368 @@ html, body, #root {
 .dl-amt-rcvd  { color: #25D366; }
 .dl-bal { color: #374151; }
 .dl-foot td { padding: 6px 8px; border-top: 2px solid #e2e8f0; background: #f8fafc; }
+
+
+/* ── Photo Review Card — Stacked Layout ─────────────────────────── */
+
+/* Full-width bubble */
+.msg-row--photo { align-items: stretch; }
+.msg-row--photo .bubble {
+  max-width: calc(100% - 8px);
+  width: calc(100% - 8px);
+  padding: 0;
+  overflow: hidden;
+}
+
+/* Card container */
+.photo-review-card {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+}
+
+/* ── TOP: photo — 45% of card height, always readable ── */
+.photo-stack-img-wrap {
+  position: relative;
+  width: 100%;
+  height: 45%;                /* proportional — adapts to card height */
+  min-height: 200px;
+  max-height: 320px;
+  background: #f5f2ee;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-bottom: 1px solid #e2e8f0;
+}
+.photo-stack-img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;        /* show full image — nothing cropped */
+  cursor: zoom-in;
+  display: block;
+  transition: transform 0.2s ease;
+}
+.photo-stack-img:hover { transform: scale(1.01); }
+.photo-zoom-btn {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  background: rgba(255,255,255,0.92);
+  color: #1e293b;
+  border: none;
+  border-radius: 20px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  letter-spacing: 0.02em;
+}
+.photo-zoom-btn:hover { background: #fff; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+.photo-split-placeholder {
+  font-size: 48px;
+  color: #aaa;
+}
+
+/* Entries section */
+.photo-stack-entries {
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+}
+
+/* Header bar */
+.photo-stack-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 16px 9px;
+  background: #fff;
+  border-bottom: 2px solid #f1f5f9;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+.photo-split-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+}
+.photo-split-date {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: #64748b;
+}
+
+/* In/Out summary bar */
+.photo-summary-bar {
+  display: flex;
+  align-items: stretch;
+  background: #f8fafc;
+  border-bottom: 2px solid #f1f5f9;
+  flex-shrink: 0;
+}
+.photo-summary-in,
+.photo-summary-out {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  gap: 2px;
+}
+.photo-summary-in  { border-right: 1px solid #e2e8f0; }
+.photo-summary-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+  text-transform: uppercase;
+}
+.photo-summary-in  .photo-summary-amount { color: #16a34a; font-size: 16px; font-weight: 700; }
+.photo-summary-out .photo-summary-amount { color: #dc2626; font-size: 16px; font-weight: 700; }
+.photo-summary-divider { display: none; }
+
+/* Entries list — natural height, chat scrolls */
+.photo-stack-table {
+  padding: 10px 12px;
+  background: #f8fafc;
+}
+.photo-stack-table .nb-cell-card {
+  font-size: 13px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+  background: #fff;
+  margin: 5px 0;
+}
+.photo-stack-table .nb-type-pill  { font-size: 10.5px; padding: 2px 7px; }
+.photo-stack-table .nb-txn-desc   { font-size: 13px; font-weight: 500; line-height: 1.4; }
+.photo-stack-table .nb-cell-amount { font-size: 15px; font-weight: 700; margin: 3px 0; }
+.photo-stack-table .nb-raw-cell-text { font-size: 11px; margin-top: 3px; }
+.photo-stack-table .nb-cell-actions { margin-top: 8px; padding-top: 6px; gap: 6px; }
+.photo-stack-table .nb-btn { font-size: 15px; opacity: 0.6; }
+.photo-stack-table .nb-btn:hover { opacity: 1; }
+
+/* Two-col headers in entries area */
+.photo-stack-table .nb-two-col-headers {
+  background: #eef2ff;
+  border-radius: 8px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+}
+.photo-stack-table .nb-col-header {
+  font-size: 11px;
+  color: #4338ca;
+  font-weight: 700;
+}
+.photo-stack-table .nb-two-col-row {
+  gap: 8px;
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+}
+
+/* Actions bar — pinned at bottom */
+.photo-stack-actions {
+  border-top: 2px solid #f1f5f9;
+  padding: 10px 14px;
+  background: #fff;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.photo-stack-actions .confirm-card-actions {
+  display: flex;
+  gap: 8px;
+}
+.photo-stack-actions .confirm-save-btn {
+  flex: 1;
+  padding: 10px;
+  font-size: 14px;
+  border-radius: 10px;
+}
+.photo-stack-actions .confirm-cancel-btn {
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+
+/* ── Full-screen lightbox ── */
+.photo-lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.88);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  padding: 16px;
+}
+.photo-lightbox img {
+  max-width: 100%;
+  max-height: 90vh;
+  border-radius: 8px;
+  object-fit: contain;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+.photo-lightbox-close {
+  position: absolute;
+  top: 14px;
+  right: 18px;
+  font-size: 30px;
+  color: #fff;
+  background: none;
+  border: none;
+  cursor: pointer;
+  opacity: 0.8;
+}
+.photo-lightbox-close:hover { opacity: 1; }
+
+/* ── Notebook layout hint (column names from original page) ── */
+.photo-layout-hint {
+  font-size: 10.5px;
+  color: #64748b;
+  background: #f8fafc;
+  padding: 4px 10px;
+  border-bottom: 1px solid #e2e8f0;
+  font-style: italic;
+}
+
+/* ── Raw cell text (what was physically written) ── */
+.nb-raw-cell-text {
+  display: block;
+  font-size: 9.5px;
+  color: #94a3b8;
+  font-style: italic;
+  margin-top: 2px;
+  line-height: 1.2;
+}
+
+/* ── Low-confidence highlight (card-based + table row) ── */
+.nb-row-data.nb-row-lowconf { background: #fffbeb; }
+.nb-row-data.nb-row-lowconf:hover { background: #fef3c7; }
+.nb-cell-card.nb-row-lowconf { background: #fffbeb; border-left-color: #fbbf24 !important; }
+.nb-lowconf-warn { font-size: 11px; margin-left: 4px; cursor: help; }
+
+/* ── Orphan section ── */
+.nb-orphan-section { margin-top: 8px; }
+.nb-orphan-divider {
+  padding: 5px 8px;
+  font-size: 11px;
+  color: #94a3b8;
+  font-style: italic;
+  background: #f1f5f9;
+  border-top: 2px dashed #cbd5e1;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: center;
+  margin-bottom: 4px;
+}
+/* Old table-based orphan divider (keep for compatibility) */
+.nb-orphan-divider td {
+  padding: 5px 10px;
+  font-size: 11px;
+  color: #94a3b8;
+  font-style: italic;
+  background: #f1f5f9;
+  border-top: 2px dashed #cbd5e1;
+  border-bottom: 1px solid #e2e8f0;
+  text-align: center;
+}
+
+/* ── Transaction card (used in all three layout modes) ── */
+.nb-cell-card {
+  border-left: 3px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 8px 12px;
+  background: #f8fafc;
+  font-size: 13px;
+  color: #1e293b;
+  margin: 4px 0;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+}
+.nb-cell-card.nb-cell-editing {
+  background: #fffbeb;
+  border-left-color: #fcd34d;
+}
+.nb-cell-top {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-bottom: 2px;
+}
+.nb-cell-amount {
+  font-family: 'SF Mono', 'Fira Mono', monospace;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #0f172a;
+  margin: 1px 0;
+}
+.nb-cell-actions {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 3px;
+  padding-top: 3px;
+  border-top: 1px solid #f1f5f9;
+}
+.nb-non-txn-cell {
+  padding: 3px 6px;
+  font-size: 10.5px;
+  color: #94a3b8;
+  font-style: italic;
+  text-align: center;
+}
+
+/* ── List layout ── */
+.nb-list-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 0;
+}
+
+/* ── Two-column layout ── */
+.nb-two-col-wrap {
+  padding: 4px 0;
+}
+.nb-two-col-headers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 5px 0 3px;
+  border-bottom: 2px solid #e2e8f0;
+  margin-bottom: 4px;
+}
+.nb-col-header {
+  font-size: 11px;
+  font-weight: 700;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 4px;
+}
+.nb-two-col-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-bottom: 3px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid #f1f5f9;
+}
+.nb-two-col-row:last-of-type { border-bottom: none; }
+.nb-two-col-cell { min-width: 0; overflow: hidden; }
+
+/* ── Mobile: stack vertically ── */
+@media (max-width: 480px) {
+  .photo-stack-img-wrap { height: 200px; }
+}
