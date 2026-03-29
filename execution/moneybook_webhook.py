@@ -55,7 +55,7 @@ from moneybook_db import (
 )
 from moneybook_parser import (
     parse_text_message, parse_image_message, parse_correction,
-    classify_correction_scope,
+    classify_correction_scope, is_trackable_person,
     format_pending_confirmation, format_person_question,
     format_daily_summary, format_period_summary, format_udhaar_list,
     TAG_META,
@@ -118,6 +118,7 @@ PERSON_LABELS = {
     'supplier': '📦 Supplier/Party',
     'home':     '🏠 Ghar ka kharcha',
 }
+
 
 HELP_MSG = """\
 🏪 *MoneyBook — Aapka Digital Khata*
@@ -293,9 +294,24 @@ def handle_confirming(body: str, store: dict, state: dict) -> str:
         save_confirmed_batch(sid, pending, raw_message, source, persons_map)
 
         # Check if any persons need classification (only those with needs_tracking=True)
-        trackable_persons = [p.get('person_name') for p in pending
-                             if p.get('person_name') and p.get('needs_tracking', True)]
-        unknown = get_unknown_persons(sid, [p for p in trackable_persons if p])
+        candidates_wa = [
+            p.get('person_name') for p in pending
+            if p.get('person_name') and p.get('needs_tracking', True)
+        ]
+        unknown_candidates_wa = get_unknown_persons(sid, [p for p in candidates_wa if p])
+
+        # Use Haiku to confirm each unknown is actually a real trackable person
+        trackable_persons = []
+        for name in unknown_candidates_wa:
+            txn = next((t for t in pending if t.get('person_name') == name), {})
+            if is_trackable_person(
+                name=name,
+                description=txn.get('description', ''),
+                txn_type=txn.get('type', ''),
+                amount=txn.get('amount', 0),
+            ):
+                trackable_persons.append(name)
+        unknown = trackable_persons
         if unknown:
             next_person = unknown[0]
             # Build person classification prompt for the first unknown
@@ -1061,7 +1077,6 @@ async def api_confirm(req: ConfirmRequest):
     """Save (possibly edited) transactions from the confirm card UI."""
     store = get_or_create_store(req.phone)
     sid   = store['id']
-    log.info(f"[CONFIRM DEBUG] transactions={len(req.transactions)} original_transactions={len(req.original_transactions) if req.original_transactions else 'None'}")
 
     saved = []
     for t in req.transactions:
@@ -1116,11 +1131,26 @@ async def api_confirm(req: ConfirmRequest):
                 log.warning(f"Failed to save correction for entry {i+1}: {e}")
 
     # ── Person classification for any new names ──
-    trackable = list(dict.fromkeys(
+    # Build candidate list: parser said needs_tracking=True and name not already known
+    candidates = list(dict.fromkeys(
         t.get('person_name') for t in req.transactions
         if t.get('person_name') and t.get('needs_tracking', False)
     ))
-    unknown = get_unknown_persons(sid, trackable) if trackable else []
+    unknown_candidates = get_unknown_persons(sid, candidates) if candidates else []
+
+    # Use Haiku to confirm each unknown name is actually a real trackable person
+    # (filters out words like "Manual", "Counter" etc. that parser misextracted)
+    trackable = []
+    for name in unknown_candidates:
+        txn = next((t for t in req.transactions if t.get('person_name') == name), {})
+        if is_trackable_person(
+            name=name,
+            description=txn.get('description', ''),
+            txn_type=txn.get('type', ''),
+            amount=txn.get('amount', 0),
+        ):
+            trackable.append(name)
+    unknown = trackable
 
     if unknown:
         next_name = unknown[0]

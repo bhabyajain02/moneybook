@@ -148,6 +148,19 @@ BAD: "Sale transaction", "Expense payment", "Salary paid"
 GOOD: "Rice and dal sold to Raju", "Electricity bill for March", "Monthly salary to Ramesh"
 Keep under 60 characters. Use natural phrasing, not jargon.
 
+━━ PERSON_NAME RULES ━━
+person_name must be a real human's name (e.g. "Ramesh", "Vivek Singh", "A. Tiwari").
+Set person_name=null for anything that is NOT a real human name:
+- Generic words: "Manual", "Counter", "Cash", "Total", "Balance", "Online", "UPI"
+- Transaction types: "Opening", "Closing", "Carry Forward", "Collection", "Adjustment"
+- Payment methods: "Bank", "Credit", "Advance", "Transfer", "Deposit"
+If the word could appear in a dictionary as a common noun/verb/adjective — it is NOT a person_name.
+
+━━ NEEDS_TRACKING ━━
+Set needs_tracking=true ONLY when person_name is a real human whose relationship
+should be tracked (customer who owes money, staff on payroll, supplier you pay regularly).
+Set needs_tracking=false for payment descriptors, method names, or transaction types.
+
 ━━ VERIFY YOUR WORK ━━
 If any total or balance figure is written on the page, check that your
 extracted entries sum to it. If they don't match, re-read before finalising.
@@ -244,12 +257,19 @@ BAD: "Sale transaction", "Expense payment", "Salary paid"
 GOOD: "Rice and dal sold to Raju", "Electricity bill for March", "Monthly salary to Ramesh", "Auto parts purchased for repair"
 Keep under 60 characters. Use natural phrasing, not jargon.
 
+━━ PERSON_NAME RULES ━━
+person_name must be a real human's name (e.g. "Ramesh", "Vivek Singh", "A. Tiwari").
+Set person_name=null for anything that is NOT a real human name:
+- Generic words: "Manual", "Counter", "Cash", "Total", "Balance", "Online", "UPI"
+- Transaction types: "Opening", "Closing", "Carry Forward", "Collection", "Adjustment"
+- Payment methods: "Bank", "Credit", "Advance", "Transfer", "Deposit"
+If the word could appear in a dictionary as a common noun/verb/adjective — it is NOT a person_name.
+
 ━━ NEEDS_TRACKING ━━
 Set needs_tracking=true ONLY when person_name is a real human whose relationship
 should be tracked (customer who owes money, staff on payroll, supplier you pay regularly).
 Set needs_tracking=false when person_name is a payment descriptor, method name,
-transaction type (e.g. "manual", "counter", "cash sale", "UPI", "online"), or
-any case where tracking their category adds no business value.
+transaction type, or any case where tracking their category adds no business value.
 For udhaar_given and udhaar_received: needs_tracking=true if person_name looks like a real name.
 For sale/expense with generic descriptors: needs_tracking=false.
 
@@ -574,6 +594,55 @@ SCOPE definitions:
 Return ONLY valid JSON, no explanation:
 {{"scope": "global" | "segment" | "store"}}
 """
+
+
+_IS_PERSON_PROMPT = """\
+An AI parsed a financial transaction from an Indian retail store notebook and extracted a person_name.
+Decide whether this is a real human whose business relationship should be tracked.
+
+Transaction context:
+  person_name : "{name}"
+  description : "{description}"
+  type        : "{txn_type}"
+  amount      : {amount}
+
+Answer YES if "{name}" is clearly a real person (staff member, customer, supplier, family member).
+Answer NO if "{name}" is any of:
+  - A common word / transaction descriptor (Manual, Counter, Cash, Total, Balance, Collection)
+  - A payment method or channel (UPI, Online, Bank, Credit, Advance)
+  - Part of the description that was mistakenly extracted as a name
+  - Ambiguous enough that it could easily be a descriptor rather than a person
+
+When in doubt, answer NO — it's better to skip than to ask about a non-person.
+
+Reply with a single JSON object, no explanation:
+{{"is_person": true | false, "reason": "<one short sentence>"}}
+"""
+
+
+def is_trackable_person(name: str, description: str, txn_type: str, amount: float = 0) -> bool:
+    """
+    Use Haiku to decide whether a person_name extracted from a transaction
+    is a real human worth classifying, or just a descriptor/noise.
+
+    Returns True only if the name is clearly a real person.
+    Defaults to False on any error — never spam the user with bad questions.
+    """
+    prompt = _IS_PERSON_PROMPT.format(
+        name=name,
+        description=description or '',
+        txn_type=txn_type or '',
+        amount=amount or 0,
+    )
+    try:
+        text = _call_claude(_TEXT_MODEL, prompt)
+        result = json.loads(_clean_json(text))
+        verdict = result.get('is_person', False)
+        log.debug(f"is_trackable_person({name!r}): {verdict} — {result.get('reason','')}")
+        return bool(verdict)
+    except Exception as e:
+        log.warning(f"is_trackable_person failed for {name!r}: {e}")
+        return False   # safe default: never ask about something uncertain
 
 
 def classify_correction_scope(original_txn: dict, corrected_txn: dict,
