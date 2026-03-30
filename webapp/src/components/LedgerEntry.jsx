@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
-import { classifyLedger, speakLedger } from '../api.js'
+import { classifyLedger, speakLedger, fetchDues, fetchStaff } from '../api.js'
 
-const EMPTY_ROW = () => ({ particulars: '', amount: '', _txn: null })
+const EMPTY_ROW      = () => ({ particulars: '', amount: '', _txn: null })
+const EMPTY_DUES_ROW = () => ({ desc: '', billNo: '', amount: '' })
+const EMPTY_PERSON_ROW = () => ({ name: '', amount: '' })
 
 const IN_TYPES  = new Set(['sale','receipt','udhaar_received','cash_in_hand','upi_in_hand','opening_balance'])
 const OUT_TYPES = new Set(['expense','udhaar_given','bank_deposit','closing_balance'])
@@ -101,6 +103,16 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
   const [date, setDate]               = useState(isPrefill ? (prefill.date || today) : today)
   const [inRows, setInRows]           = useState(() => initRows().inRows)
   const [outRows, setOutRows]         = useState(() => initRows().outRows)
+  // ── Sub-section rows ────────────────────────────────────────
+  const [duesInRows,    setDuesInRows]    = useState([EMPTY_DUES_ROW()])
+  const [duesOutRows,   setDuesOutRows]   = useState([EMPTY_DUES_ROW()])
+  const [staffInRows,   setStaffInRows]   = useState([EMPTY_PERSON_ROW()])
+  const [staffOutRows,  setStaffOutRows]  = useState([EMPTY_PERSON_ROW()])
+  const [othersInRows,  setOthersInRows]  = useState([EMPTY_PERSON_ROW()])
+  const [othersOutRows, setOthersOutRows] = useState([EMPTY_PERSON_ROW()])
+  const [staffOptions,  setStaffOptions]  = useState([])
+  const [othersOptions, setOthersOptions] = useState([])
+
   const [loading, setLoading]         = useState(false)
   const [speaking, setSpeaking]         = useState(false)
   const [speakingIdx, setSpeakingIdx]   = useState(null)  // { side:'in'|'out', rowIdx:number } | null
@@ -114,11 +126,39 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
   const dateStr = new Date(date + 'T00:00:00').toLocaleDateString('en-IN',
     { day: 'numeric', month: 'long', year: 'numeric' })
 
+  // ── Fetch staff/others names for dropdowns ──────────────────
+  useEffect(() => {
+    if (!phone) return
+    fetchStaff(phone)
+      .then(data => setStaffOptions((data || []).map(s => s.name || s).filter(Boolean)))
+      .catch(() => {})
+    fetchDues(phone)
+      .then(data => {
+        const names = [...new Set((data || []).map(d => d.person_name).filter(Boolean))]
+        setOthersOptions(names)
+      })
+      .catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phone])
+
   // ── Close guard: show confirmation if there is data ─────────
-  const validIn  = inRows .filter(r => r.particulars.trim() && r.amount)
-  const validOut = outRows.filter(r => r.particulars.trim() && r.amount)
-  const hasEntries = validIn.length > 0 || validOut.length > 0
+  const validIn      = inRows     .filter(r => r.particulars.trim() && r.amount)
+  const validOut     = outRows    .filter(r => r.particulars.trim() && r.amount)
+  const validDuesIn  = duesInRows .filter(r => r.amount)
+  const validDuesOut = duesOutRows.filter(r => r.amount)
+  const validStaffIn   = staffInRows  .filter(r => r.amount)
+  const validStaffOut  = staffOutRows .filter(r => r.amount)
+  const validOthersIn  = othersInRows .filter(r => r.amount)
+  const validOthersOut = othersOutRows.filter(r => r.amount)
+
+  const hasEntries = validIn.length + validOut.length
+    + validDuesIn.length + validDuesOut.length
+    + validStaffIn.length + validStaffOut.length
+    + validOthersIn.length + validOthersOut.length > 0
   const totalCount = validIn.length + validOut.length
+    + validDuesIn.length + validDuesOut.length
+    + validStaffIn.length + validStaffOut.length
+    + validOthersIn.length + validOthersOut.length
 
   function requestClose() {
     // Always confirm in prefill mode (data came from photo); confirm in manual
@@ -256,8 +296,23 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
     }
   }
 
-  const totalIn  = inRows .reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
-  const totalOut = outRows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
+  // ── Sub-section row helpers ──────────────────────────────────
+  const SECTION_SETTERS = {
+    duesIn:    setDuesInRows,   duesOut:    setDuesOutRows,
+    staffIn:   setStaffInRows,  staffOut:   setStaffOutRows,
+    othersIn:  setOthersInRows, othersOut:  setOthersOutRows,
+  }
+  function updateSectionRow(section, idx, field, val) {
+    SECTION_SETTERS[section](prev => prev.map((r, i) => i === idx ? { ...r, [field]: val } : r))
+  }
+  function addSectionRow(section, emptyFn) {
+    SECTION_SETTERS[section](prev => [...prev, emptyFn()])
+  }
+
+  const totalIn  = [...inRows, ...duesInRows, ...staffInRows, ...othersInRows]
+    .reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
+  const totalOut = [...outRows, ...duesOutRows, ...staffOutRows, ...othersOutRows]
+    .reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
   const maxRows  = Math.max(inRows.length, outRows.length)
 
   // ── Save ─────────────────────────────────────────────────────
@@ -267,7 +322,15 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
     if (isPrefill) {
       setLoading(true)
       try {
-        const editedTxns = rowsToTxns(inRows, outRows, date)
+        const editedTxns = [
+          ...rowsToTxns(inRows, outRows, date),
+          ...validDuesIn .map(r => ({ type: 'udhaar_received', description: r.desc || 'Dues received', bill_number: r.billNo || '', amount: parseFloat(r.amount) || 0, date })),
+          ...validDuesOut.map(r => ({ type: 'udhaar_given',    description: r.desc || 'Dues given',    bill_number: r.billNo || '', amount: parseFloat(r.amount) || 0, date })),
+          ...validStaffIn  .map(r => ({ type: 'receipt', description: r.name || 'Staff',         person_name: r.name || '', amount: parseFloat(r.amount) || 0, date })),
+          ...validStaffOut .map(r => ({ type: 'expense', description: r.name || 'Staff expense', person_name: r.name || '', amount: parseFloat(r.amount) || 0, date })),
+          ...validOthersIn .map(r => ({ type: 'receipt', description: r.name || 'Others',        person_name: r.name || '', amount: parseFloat(r.amount) || 0, date })),
+          ...validOthersOut.map(r => ({ type: 'expense', description: r.name || 'Others',        person_name: r.name || '', amount: parseFloat(r.amount) || 0, date })),
+        ]
         await prefill.onSave(editedTxns, prefill.msgId)
         // Don't call onClose() here — prefill.onSave closes via setPhotoReview(null)
       } catch (e) {
@@ -276,9 +339,17 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
         setLoading(false)
       }
     } else {
+      const duesBillDesc = (r, suffix) =>
+        [r.desc, r.billNo ? `Bill#${r.billNo}` : ''].filter(Boolean).join(' ') || suffix
       const rows = [
-        ...validIn .map(r => ({ particulars: r.particulars, amount: r.amount, column: 'in'  })),
-        ...validOut.map(r => ({ particulars: r.particulars, amount: r.amount, column: 'out' })),
+        ...validIn      .map(r => ({ particulars: r.particulars,                  amount: r.amount, column: 'in'  })),
+        ...validOut     .map(r => ({ particulars: r.particulars,                  amount: r.amount, column: 'out' })),
+        ...validDuesIn  .map(r => ({ particulars: duesBillDesc(r,'Dues received'), amount: r.amount, column: 'in'  })),
+        ...validDuesOut .map(r => ({ particulars: duesBillDesc(r,'Dues given'),    amount: r.amount, column: 'out' })),
+        ...validStaffIn  .map(r => ({ particulars: r.name || 'Staff',             amount: r.amount, column: 'in'  })),
+        ...validStaffOut .map(r => ({ particulars: r.name || 'Staff expense',     amount: r.amount, column: 'out' })),
+        ...validOthersIn .map(r => ({ particulars: r.name || 'Others',            amount: r.amount, column: 'in'  })),
+        ...validOthersOut.map(r => ({ particulars: r.name || 'Others',            amount: r.amount, column: 'out' })),
       ]
       setLoading(true)
       try {
@@ -427,11 +498,168 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             })}
           </div>
 
-          {/* Add row buttons */}
+          {/* Add row buttons — general section */}
           <div className="ledger-add-row">
             <button className="ledger-add-btn" onClick={() => addRow('in')}>+ Add row</button>
             <div className="ledger-center-divider" />
             <button className="ledger-add-btn" onClick={() => addRow('out')}>+ Add row</button>
+          </div>
+
+          {/* ══ DUES section ══ */}
+          <div className="ledger-section-divider">
+            <div className="ledger-section-label">📥 Dues Received</div>
+            <div className="ledger-center-divider" />
+            <div className="ledger-section-label">📤 Dues Given</div>
+          </div>
+          {Array.from({ length: Math.max(duesInRows.length, duesOutRows.length) }).map((_, i) => (
+            <div key={`dues-${i}`} className="ledger-data-row">
+              <div className="ledger-entry-cell ledger-dues-cell">
+                {i < duesInRows.length ? (
+                  <>
+                    <input className="ledger-input-desc ledger-input-desc--dues"
+                      placeholder="Description"
+                      value={duesInRows[i].desc}
+                      onChange={e => updateSectionRow('duesIn', i, 'desc', e.target.value)}
+                    />
+                    <input className="ledger-input-billno"
+                      placeholder="Bill#"
+                      value={duesInRows[i].billNo}
+                      onChange={e => updateSectionRow('duesIn', i, 'billNo', e.target.value)}
+                    />
+                    <input className="ledger-input-amt" placeholder="0" type="number" inputMode="decimal"
+                      value={duesInRows[i].amount}
+                      onChange={e => updateSectionRow('duesIn', i, 'amount', e.target.value)}
+                    />
+                  </>
+                ) : <div className="ledger-cell-placeholder" />}
+              </div>
+              <div className="ledger-center-divider" />
+              <div className="ledger-entry-cell ledger-dues-cell">
+                {i < duesOutRows.length ? (
+                  <>
+                    <input className="ledger-input-desc ledger-input-desc--dues"
+                      placeholder="Description"
+                      value={duesOutRows[i].desc}
+                      onChange={e => updateSectionRow('duesOut', i, 'desc', e.target.value)}
+                    />
+                    <input className="ledger-input-billno"
+                      placeholder="Bill#"
+                      value={duesOutRows[i].billNo}
+                      onChange={e => updateSectionRow('duesOut', i, 'billNo', e.target.value)}
+                    />
+                    <input className="ledger-input-amt" placeholder="0" type="number" inputMode="decimal"
+                      value={duesOutRows[i].amount}
+                      onChange={e => updateSectionRow('duesOut', i, 'amount', e.target.value)}
+                    />
+                  </>
+                ) : <div className="ledger-cell-placeholder" />}
+              </div>
+            </div>
+          ))}
+          <div className="ledger-add-row">
+            <button className="ledger-add-btn" onClick={() => addSectionRow('duesIn', EMPTY_DUES_ROW)}>+ Dues row</button>
+            <div className="ledger-center-divider" />
+            <button className="ledger-add-btn" onClick={() => addSectionRow('duesOut', EMPTY_DUES_ROW)}>+ Dues row</button>
+          </div>
+
+          {/* ══ STAFF section ══ */}
+          <div className="ledger-section-divider">
+            <div className="ledger-section-label">👷 Staff (In)</div>
+            <div className="ledger-center-divider" />
+            <div className="ledger-section-label">👷 Staff Expense</div>
+          </div>
+          {Array.from({ length: Math.max(staffInRows.length, staffOutRows.length) }).map((_, i) => (
+            <div key={`staff-${i}`} className="ledger-data-row">
+              <div className="ledger-entry-cell">
+                {i < staffInRows.length ? (
+                  <>
+                    <input className="ledger-input-name" list="staff-list"
+                      placeholder="Staff name"
+                      value={staffInRows[i].name}
+                      onChange={e => updateSectionRow('staffIn', i, 'name', e.target.value)}
+                    />
+                    <input className="ledger-input-amt" placeholder="0" type="number" inputMode="decimal"
+                      value={staffInRows[i].amount}
+                      onChange={e => updateSectionRow('staffIn', i, 'amount', e.target.value)}
+                    />
+                  </>
+                ) : <div className="ledger-cell-placeholder" />}
+              </div>
+              <div className="ledger-center-divider" />
+              <div className="ledger-entry-cell">
+                {i < staffOutRows.length ? (
+                  <>
+                    <input className="ledger-input-name" list="staff-list"
+                      placeholder="Staff name"
+                      value={staffOutRows[i].name}
+                      onChange={e => updateSectionRow('staffOut', i, 'name', e.target.value)}
+                    />
+                    <input className="ledger-input-amt" placeholder="0" type="number" inputMode="decimal"
+                      value={staffOutRows[i].amount}
+                      onChange={e => updateSectionRow('staffOut', i, 'amount', e.target.value)}
+                    />
+                  </>
+                ) : <div className="ledger-cell-placeholder" />}
+              </div>
+            </div>
+          ))}
+          <datalist id="staff-list">
+            {staffOptions.map(n => <option key={n} value={n} />)}
+          </datalist>
+          <div className="ledger-add-row">
+            <button className="ledger-add-btn" onClick={() => addSectionRow('staffIn',  EMPTY_PERSON_ROW)}>+ Staff row</button>
+            <div className="ledger-center-divider" />
+            <button className="ledger-add-btn" onClick={() => addSectionRow('staffOut', EMPTY_PERSON_ROW)}>+ Staff row</button>
+          </div>
+
+          {/* ══ OTHERS section ══ */}
+          <div className="ledger-section-divider">
+            <div className="ledger-section-label">🔖 Others (In)</div>
+            <div className="ledger-center-divider" />
+            <div className="ledger-section-label">🔖 Others (Out)</div>
+          </div>
+          {Array.from({ length: Math.max(othersInRows.length, othersOutRows.length) }).map((_, i) => (
+            <div key={`others-${i}`} className="ledger-data-row">
+              <div className="ledger-entry-cell">
+                {i < othersInRows.length ? (
+                  <>
+                    <input className="ledger-input-name" list="others-list"
+                      placeholder="Name"
+                      value={othersInRows[i].name}
+                      onChange={e => updateSectionRow('othersIn', i, 'name', e.target.value)}
+                    />
+                    <input className="ledger-input-amt" placeholder="0" type="number" inputMode="decimal"
+                      value={othersInRows[i].amount}
+                      onChange={e => updateSectionRow('othersIn', i, 'amount', e.target.value)}
+                    />
+                  </>
+                ) : <div className="ledger-cell-placeholder" />}
+              </div>
+              <div className="ledger-center-divider" />
+              <div className="ledger-entry-cell">
+                {i < othersOutRows.length ? (
+                  <>
+                    <input className="ledger-input-name" list="others-list"
+                      placeholder="Name"
+                      value={othersOutRows[i].name}
+                      onChange={e => updateSectionRow('othersOut', i, 'name', e.target.value)}
+                    />
+                    <input className="ledger-input-amt" placeholder="0" type="number" inputMode="decimal"
+                      value={othersOutRows[i].amount}
+                      onChange={e => updateSectionRow('othersOut', i, 'amount', e.target.value)}
+                    />
+                  </>
+                ) : <div className="ledger-cell-placeholder" />}
+              </div>
+            </div>
+          ))}
+          <datalist id="others-list">
+            {othersOptions.map(n => <option key={n} value={n} />)}
+          </datalist>
+          <div className="ledger-add-row">
+            <button className="ledger-add-btn" onClick={() => addSectionRow('othersIn',  EMPTY_PERSON_ROW)}>+ Others row</button>
+            <div className="ledger-center-divider" />
+            <button className="ledger-add-btn" onClick={() => addSectionRow('othersOut', EMPTY_PERSON_ROW)}>+ Others row</button>
           </div>
 
           {/* Totals */}
