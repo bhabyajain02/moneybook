@@ -1,11 +1,5 @@
 const BASE = '/api'
 
-// Safely parse JSON — returns {} if the response is HTML/empty (e.g. proxy error)
-async function safeJson(r) {
-  const text = await r.text()
-  try { return JSON.parse(text) } catch { return {} }
-}
-
 export async function checkPhone(phone) {
   // Read-only check — does NOT create a store record
   const r = await fetch(`${BASE}/check?phone=${encodeURIComponent(phone)}`)
@@ -30,9 +24,8 @@ export async function sendMessage(phone, body, language = 'hinglish') {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ phone, body, language }),
   })
-  const data = await safeJson(r)
-  if (!r.ok) throw new Error(data.detail || `Server error (${r.status})`)
-  return data
+  if (!r.ok) throw new Error((await r.json()).detail || 'Send failed')
+  return r.json()
   // returns { user_message_id, bot_message_id, bot_reply, quick_replies, processing }
 }
 
@@ -42,9 +35,8 @@ export async function sendImage(phone, file, language = 'hinglish') {
   fd.append('file', file)
   fd.append('language', language)
   const r = await fetch(`${BASE}/image`, { method: 'POST', body: fd })
-  const data = await safeJson(r)
-  if (!r.ok) throw new Error(data.detail || `Server error (${r.status})`)
-  return data
+  if (!r.ok) throw new Error((await r.json()).detail || 'Upload failed')
+  return r.json()
   // returns { user_message_id, processing: true }
 }
 
@@ -55,8 +47,11 @@ export async function pollMessages(phone, afterId = 0) {
   // returns { messages: [{id, direction, body, media_url, created_at}], processing }
 }
 
-export async function fetchAnalytics(phone, period = 'day') {
-  const r = await fetch(`${BASE}/analytics?phone=${encodeURIComponent(phone)}&period=${period}`)
+export async function fetchAnalytics(phone, period = 'day', start = null, end = null) {
+  let url = `${BASE}/analytics?phone=${encodeURIComponent(phone)}&period=${period}`
+  if (start) url += `&start=${start}`
+  if (end)   url += `&end=${end}`
+  const r = await fetch(url)
   if (!r.ok) throw new Error('Analytics fetch failed')
   return r.json()
 }
@@ -94,9 +89,12 @@ export async function confirmTransactions(phone, transactions, botMessageId = nu
       original_transactions: originalTransactions,
     }),
   })
-  const data = await safeJson(r)
-  if (!r.ok) throw new Error(data.detail ? JSON.stringify(data.detail) : `Server error (${r.status})`)
-  return data
+  if (!r.ok) {
+    let detail = `HTTP ${r.status}`
+    try { const d = await r.json(); detail = d.detail || JSON.stringify(d) } catch {}
+    throw new Error(detail)
+  }
+  return r.json()
 }
 
 export async function quickParse(description, amount, personName = '') {
@@ -123,15 +121,21 @@ export async function fetchPersonDuesHistory(phone, personName) {
   return r.json()
 }
 
-export async function classifyLedger(phone, date, rows, language = 'hinglish') {
-  const r = await fetch(`${BASE}/ledger-classify`, {
+export async function fetchProfile(phone) {
+  const r = await fetch(`${BASE}/profile?phone=${encodeURIComponent(phone)}`)
+  if (!r.ok) throw new Error('Could not load profile')
+  return r.json()
+  // returns { name, phone, segment, language, joined }
+}
+
+export async function updateProfile(phone, { name, language } = {}) {
+  const r = await fetch(`${BASE}/profile`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ phone, date, rows, language }),
+    body: JSON.stringify({ phone, name, language }),
   })
-  if (!r.ok) throw new Error((await r.json()).detail || 'Classify failed')
+  if (!r.ok) throw new Error('Update failed')
   return r.json()
-  // returns { message_id, pending_transactions, response_message }
 }
 
 export async function dismissMessage(phone, botMessageId) {
@@ -140,18 +144,4 @@ export async function dismissMessage(phone, botMessageId) {
   })
   if (!r.ok) return  // non-critical
   return r.json()
-}
-
-export async function speakLedger(inEntries, outEntries, dateStr, language = 'hinglish', dateFromPhoto = true) {
-  const r = await fetch(`${BASE}/tts`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      in_entries: inEntries, out_entries: outEntries,
-      date_str: dateStr, language,
-      date_from_photo: dateFromPhoto,
-    }),
-  })
-  if (!r.ok) throw new Error('TTS unavailable')
-  return r.json()  // { audio: '<base64 mp3>', voice: '...' }
 }
