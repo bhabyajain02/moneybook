@@ -733,9 +733,9 @@ class UpdateContactRequest(BaseModel):
 
 class ConfirmRequest(BaseModel):
     phone: str
-    transactions: list            # final (possibly edited) transactions
-    bot_message_id: int = None
-    original_transactions: list = None  # AI-parsed originals, for diff-based learning
+    transactions: list                        # final (possibly edited) transactions
+    bot_message_id: Optional[int] = None
+    original_transactions: Optional[list] = None  # AI-parsed originals, for diff-based learning
 
 class QuickParseRequest(BaseModel):
     description: str
@@ -1160,7 +1160,7 @@ async def api_confirm(req: ConfirmRequest):
         set_bot_state(sid, {
             'state':         'classifying',
             'persons_queue': unknown,
-            'current_idx':   0,
+            'person_index':  0,
         })
         save_web_message(sid, 'bot', classify_text, quick_replies=['1', '2', '3', '4'])
     else:
@@ -1272,6 +1272,64 @@ async def api_analytics(phone: str, period: str = 'day'):
     }
 
 
+class LedgerClassifyRequest(BaseModel):
+    phone:    str
+    date:     str                         # YYYY-MM-DD
+    rows:     list                        # [{ particulars, amount, column: 'in'|'out' }]
+    language: Optional[str] = None        # ignored (store language used), but accepted
+
+@app.post('/api/ledger-classify')
+async def api_ledger_classify(req: LedgerClassifyRequest):
+    """
+    Classify ledger rows entered manually by the user.
+    Each row has: particulars (description), amount, column ('in' or 'out').
+    System decides type, tag, person_name etc. using the text parser.
+    Returns pending_transactions in the same format as the image/text parse endpoints.
+    """
+    store    = get_or_create_store(req.phone)
+    ctx      = build_store_context(store['id'])
+    language = store.get('language', 'hinglish')
+    today    = req.date or date.today().isoformat()
+
+    # Build a structured natural-language prompt from the ledger rows
+    # Include column context so parser knows IN vs OUT intent
+    in_rows  = [r for r in req.rows if r.get('column') == 'in'  and r.get('particulars') and r.get('amount')]
+    out_rows = [r for r in req.rows if r.get('column') == 'out' and r.get('particulars') and r.get('amount')]
+
+    lines = [f"Date: {today}", "Ledger entries for today:"]
+    for r in in_rows:
+        lines.append(f"IN  | {r['particulars']} | ₹{r['amount']}")
+    for r in out_rows:
+        lines.append(f"OUT | {r['particulars']} | ₹{r['amount']}")
+
+    message = '\n'.join(lines)
+
+    try:
+        parsed = parse_text_message(message, store_context=ctx, language=language)
+        txns   = parsed.get('transactions', [])
+
+        # Force date on all transactions
+        for t in txns:
+            t['date'] = today
+
+        response_msg = parsed.get('response_message', f'{len(txns)} entries from ledger')
+        msg_id = save_web_message(
+            store['id'], 'bot', response_msg,
+            metadata={
+                'pending_transactions': txns,
+                'source': 'ledger',
+                'page_date': today,
+            }
+        )
+        return {
+            'message_id':           msg_id,
+            'pending_transactions':  txns,
+            'response_message':     response_msg,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post('/api/quick-parse')
 async def api_quick_parse(req: QuickParseRequest):
     """Parse a minimal hint (description + amount + person) into a full transaction object."""
@@ -1340,6 +1398,271 @@ async def api_staff(phone: str):
     return {'staff': staff}
 
 
+# ── Text-to-Speech ────────────────────────────────────────────
+
+# Google Cloud TTS — Neural2/WaveNet voices trained on native regional speakers
+# (language_code, voice_name) — Neural2 where available, WaveNet fallback
+_GOOGLE_TTS_VOICES = {
+    'hinglish': ('hi-IN', 'hi-IN-Neural2-D'),   # male Hindi — Hinglish text is Roman Hindi
+    'hindi':    ('hi-IN', 'hi-IN-Neural2-A'),   # female Hindi
+    'gujarati': ('gu-IN', 'gu-IN-Wavenet-B'),   # male Gujarati
+    'marathi':  ('mr-IN', 'mr-IN-Wavenet-C'),   # male Marathi
+    'bengali':  ('bn-IN', 'bn-IN-Wavenet-B'),   # male Bengali
+    'tamil':    ('ta-IN', 'ta-IN-Wavenet-B'),   # male Tamil
+    'telugu':   ('te-IN', 'te-IN-Wavenet-B'),   # male Telugu
+    'kannada':  ('kn-IN', 'kn-IN-Wavenet-B'),   # male Kannada
+    'punjabi':  ('pa-IN', 'pa-IN-Wavenet-B'),   # male Punjabi
+    'english':  ('en-IN', 'en-IN-Neural2-B'),   # male Indian English
+}
+
+# Language-specific phrases (intro / section labels / date emphasis)
+_TTS_PHRASES = {
+    'hinglish': dict(
+        intro='{total} entries mili notebook mein. Tarikh {date} ki hai.',
+        jama='Jama', naam='Naam', rupees='rupaye',
+        date_warn='Zaroori baat:',
+        date_set='Tarikh abhi {date} set hai.',
+        date_tip='Save karne se pehle tarikh zaroor check karein. Galat ho toh upar wala date banner tap karein aur sahi karein.',
+    ),
+    'hindi': dict(
+        intro='{total} entries mili notebook mein. Tarikh {date} ki hai.',
+        jama='Jama', naam='Naam', rupees='rupaye',
+        date_warn='Bahut zaroori:',
+        date_set='Tarikh abhi {date} set hai.',
+        date_tip='Save karne se pehle tarikh zaroor check karein. Galat ho toh upar wala date banner par tap karein.',
+    ),
+    'english': dict(
+        intro='{total} entries found in the notebook. Date is {date}.',
+        jama='JAMA', naam='NAAM', rupees='rupees',
+        date_warn='Important:',
+        date_set='The date is currently set to {date}.',
+        date_tip='Please verify the date before saving. If incorrect, tap the date banner at the top to change it.',
+    ),
+    'gujarati': dict(
+        intro='Notebook mein {total} entries meli che. Tarikh {date} ni che.',
+        jama='Jama', naam='Naam', rupees='rupiya',
+        date_warn='Jaruri:',
+        date_set='Tarikh haal {date} set che.',
+        date_tip='Save karta pehla tarikh jaroor check karo. Galat hoy to upar date banner tap karo.',
+    ),
+    'marathi': dict(
+        intro='Notebook madhye {total} entries saapadlya. Tarikh {date} ahe.',
+        jama='Jama', naam='Naam', rupees='rupaye',
+        date_warn='Mahtvache:',
+        date_set='Tarikh aata {date} set ahe.',
+        date_tip='Save karaypurvi tarikh nakki tapasaa. Chukiche aslyaas varchil date banner var tap karaa.',
+    ),
+    'bengali': dict(
+        intro='Notebook-e {total}ta entry paoa gache. Tarikh {date}.',
+        jama='Jama', naam='Naam', rupees='taka',
+        date_warn='Guruttopurno:',
+        date_set='Tarikh ekhon {date} set ache.',
+        date_tip='Save korar age tarikh obossoi check korun. Vul hole uporer date banner-e tap korun.',
+    ),
+    'tamil': dict(
+        intro='Notebook-il {total} entries kaanappattathu. Thethi {date}.',
+        jama='Jama', naam='Naam', rupees='rubai',
+        date_warn='Mukkiyam:',
+        date_set='Thethi ippo {date} set aagirudhu.',
+        date_tip='Save seivadharku munbu thethiyai sari paarungal. Thappu irundhal mele ulhla date banner-ai tap seyyungal.',
+    ),
+    'telugu': dict(
+        intro='Notebook-lo {total} entries kanugonnaamu. Tareedhu {date}.',
+        jama='Jama', naam='Naam', rupees='rupayalu',
+        date_warn='Mukhyamainatee:',
+        date_set='Tareedhu ippudu {date} set chesindi.',
+        date_tip='Save cheyyamundhu tareedhu tappakunda check cheyyandi. Tappu aite paina date banner ni tap cheyyandi.',
+    ),
+    'kannada': dict(
+        intro='Notebook-nalli {total} entries sikvide. Dhinanka {date}.',
+        jama='Jama', naam='Naam', rupees='rupai',
+        date_warn='Mukhya:',
+        date_set='Dhinanka eeaga {date} set agide.',
+        date_tip='Save maduvudakku munche dhinankavanna tapasaatakoli. Tappu aadre mele iruva date banner tap madiri.',
+    ),
+    'punjabi': dict(
+        intro='Notebook vich {total} entries milyaan. Tarikh {date} hai.',
+        jama='Jama', naam='Naam', rupees='rupaye',
+        date_warn='Zaroori:',
+        date_set='Tarikh hune {date} set hai.',
+        date_tip='Save karan ton pehlan tarikh zaroor check karo. Galat hove tan upar wala date banner tap karo.',
+    ),
+}
+
+# Stronger date phrases used when date was NOT found in the photo
+_DATE_MISSING_PHRASES = {
+    'hinglish': dict(
+        intro_no_date='{total} entries mili notebook mein. Lekin notebook mein tarikh nahi mili — isliye aaj ki tarikh {date} set ki gayi hai.',
+        date_warn_strong='RUKHIYE! Save karne se pehle — tarikh notebook mein nahi thi.',
+        date_set_default='Abhi {date} set hai, jo ki aaj ki tarikh hai. Yeh GALAT ho sakti hai.',
+        date_tip_strong='Upar wala date banner zaroor tap karein aur sahi tarikh set karein. Galat tarikh se hisaab bigad jaayega.',
+    ),
+    'hindi': dict(
+        intro_no_date='{total} entries mili notebook mein. Parantu notebook mein tarikh nahi mili — isliye aaj ki tarikh {date} set ki gayi hai.',
+        date_warn_strong='RUKIYE! Save karne se pehle — tarikh notebook mein nahi thi.',
+        date_set_default='Abhi {date} set hai jo aaj ki tarikh hai. Yeh GALAT ho sakti hai.',
+        date_tip_strong='Upar wala date banner zaroor tap karein aur sahi tarikh darj karein.',
+    ),
+    'english': dict(
+        intro_no_date='{total} entries found. However, no date was found in the notebook — today\'s date {date} has been set automatically.',
+        date_warn_strong='STOP before saving — the date was missing from the notebook.',
+        date_set_default='Currently set to {date}, which is today\'s date. This may be INCORRECT.',
+        date_tip_strong='Please tap the date banner at the top and set the correct date. Wrong date will cause incorrect records.',
+    ),
+    'gujarati': dict(
+        intro_no_date='{total} entries meli notebook mein. Pan notebook mein tarikh nahi meli — aaj ni tarikh {date} set kareli che.',
+        date_warn_strong='ROKO! Save karta pehla — tarikh notebook mein nathi.',
+        date_set_default='Haal {date} set che, je aaj ni tarikh che. Aa GALAT ho sake che.',
+        date_tip_strong='Upar wala date banner jaroor tap karo ane sahi tarikh mukho.',
+    ),
+    'marathi': dict(
+        intro_no_date='{total} entries saapadlya. Paran notebook madhye tarikh nahi — aajchi tarikh {date} set keli ahe.',
+        date_warn_strong='THAMBA! Save karaypurvi — tarikh notebook madhye navhati.',
+        date_set_default='Aata {date} set ahe, jo aajchi tarikh ahe. Hi CHUKICHI astu shakate.',
+        date_tip_strong='Varchil date banner tapaa aani yogya tarikh set karaa.',
+    ),
+    'bengali': dict(
+        intro_no_date='{total}ta entry paoa gache. Kintu notebook-e kono tarikh paoa jaynee — aajker tarikh {date} set kora hoyeche.',
+        date_warn_strong='THAMON! Save korar age — tarikh notebook-e chilo na.',
+        date_set_default='Ekhon {date} set ache, jeta aajker tarikh. Eta VOOL hote pare.',
+        date_tip_strong='Uporer date banner-e tap korun ebong sothik tarikh set korun.',
+    ),
+    'tamil': dict(
+        intro_no_date='{total} entries kaanappattathu. Anal notebook-il thethi illai — indraya thethi {date} set aagiyuludhu.',
+        date_warn_strong='NIRUTHUNGA! Save seivadharku munbu — thethi notebook-il illai.',
+        date_set_default='Ippo {date} set aagirudhu, idu indraya thethi. Idu THAPPU aaga irukkalam.',
+        date_tip_strong='Mele ulhla date banner-ai tap seytu sari thethi set seyyungal.',
+    ),
+    'telugu': dict(
+        intro_no_date='{total} entries kanugonnaamu. Kaani notebook-lo tareedhu ledu — nee tareedhu {date} set chesaamu.',
+        date_warn_strong='AAGANDI! Save cheyyamundhu — tareedhu notebook-lo ledu.',
+        date_set_default='Ippudu {date} set chesindi, idi nee tareedhu. Idi TAPPU kaavachu.',
+        date_tip_strong='Paina date banner ni tap chesi sari tareedhu set cheyyandi.',
+    ),
+    'kannada': dict(
+        intro_no_date='{total} entries sikvide. Aadare notebook-nalli dhinanka illa — inda dhinanka {date} set madalaagide.',
+        date_warn_strong='NILLIST! Save maduvudakku munche — dhinanka notebook-nalli irlilla.',
+        date_set_default='Eeaga {date} set agide, idu indina dhinanka. Idu TAPPU aagabahudu.',
+        date_tip_strong='Mele iruva date banner tap madi sari dhinanka set madiri.',
+    ),
+    'punjabi': dict(
+        intro_no_date='{total} entries milyaan notebook vich. Par notebook vich tarikh nahi mili — aaj di tarikh {date} set kar ditti gayi hai.',
+        date_warn_strong='RUKO! Save karan ton pehlan — tarikh notebook vich nahi si.',
+        date_set_default='Hune {date} set hai, jo aaj di tarikh hai. Eh GALAT ho sakdi hai.',
+        date_tip_strong='Upar wala date banner zaroor tap karo te sahi tarikh paao.',
+    ),
+}
+
+import html as _html
+
+def _build_ledger_text(in_entries: list, out_entries: list, date_str: str,
+                        language: str, date_from_photo: bool = True) -> str:
+    """Build SSML text for Google TTS with <break> pauses and natural phrasing.
+    date_from_photo=False means the date was not found in the image and defaulted to today —
+    triggers a much stronger date warning.
+    """
+    ph    = _TTS_PHRASES.get(language, _TTS_PHRASES['hinglish'])
+    total = len(in_entries) + len(out_entries)
+
+    def amt(a):
+        try: return str(int(float(a)))
+        except: return str(a)
+
+    parts = []
+
+    # Intro — if date not from photo, flag it immediately
+    if date_from_photo:
+        parts.append(ph['intro'].format(total=total, date=date_str))
+    else:
+        # Date missing from notebook — call it out upfront too
+        missing = _DATE_MISSING_PHRASES.get(language, _DATE_MISSING_PHRASES['hinglish'])
+        parts.append(missing['intro_no_date'].format(total=total, date=date_str))
+    parts.append('<break time="500ms"/>')
+
+    # JAMA entries
+    if in_entries:
+        parts.append(f'{ph["jama"]} mein {len(in_entries)} entries:')
+        parts.append('<break time="300ms"/>')
+        for i, e in enumerate(in_entries):
+            parts.append(f'<mark name="in_{i}"/>')
+            parts.append(f'{i+1}. {e.get("desc","")}, <say-as interpret-as="cardinal">{amt(e.get("amount",0))}</say-as> {ph["rupees"]}.')
+            parts.append('<break time="200ms"/>')
+
+    parts.append('<break time="400ms"/>')
+
+    # NAAM entries
+    if out_entries:
+        parts.append(f'{ph["naam"]} mein {len(out_entries)} entries:')
+        parts.append('<break time="300ms"/>')
+        for i, e in enumerate(out_entries):
+            parts.append(f'<mark name="out_{i}"/>')
+            parts.append(f'{i+1}. {e.get("desc","")}, <say-as interpret-as="cardinal">{amt(e.get("amount",0))}</say-as> {ph["rupees"]}.')
+            parts.append('<break time="200ms"/>')
+
+    # Date emphasis at the end — stronger warning if date was missing
+    parts.append('<break time="900ms"/>')
+    if date_from_photo:
+        parts.append(ph['date_warn'])
+        parts.append('<break time="400ms"/>')
+        parts.append(ph['date_set'].format(date=date_str))
+        parts.append('<break time="300ms"/>')
+        parts.append(ph['date_tip'])
+    else:
+        missing = _DATE_MISSING_PHRASES.get(language, _DATE_MISSING_PHRASES['hinglish'])
+        parts.append(missing['date_warn_strong'])
+        parts.append('<break time="500ms"/>')
+        parts.append(missing['date_set_default'].format(date=date_str))
+        parts.append('<break time="400ms"/>')
+        parts.append(missing['date_tip_strong'])
+
+    return ' '.join(parts)
+
+
+class TTSRequest(BaseModel):
+    in_entries:      list
+    out_entries:     list
+    date_str:        str
+    language:        Optional[str] = 'hinglish'
+    date_from_photo: Optional[bool] = True  # False = date defaulted to today (not found in image)
+
+
+@app.post('/api/tts')
+async def api_tts(req: TTSRequest):
+    """Generate TTS audio using Google Cloud Text-to-Speech with regional voices."""
+    import httpx, base64
+
+    key = os.getenv('GOOGLE_API_KEY', '')
+    if not key:
+        raise HTTPException(status_code=503, detail='GOOGLE_API_KEY not configured')
+
+    language = (req.language or 'hinglish').lower()
+    text     = _build_ledger_text(req.in_entries, req.out_entries, req.date_str, language,
+                                  date_from_photo=req.date_from_photo)
+
+    # Wrap in SSML speak tags — _build_ledger_text already uses <break> tags
+    ssml = f'<speak>{text}</speak>'
+    lang_code, voice_name = _GOOGLE_TTS_VOICES.get(language, _GOOGLE_TTS_VOICES['hinglish'])
+
+    url     = f'https://texttospeech.googleapis.com/v1beta1/text:synthesize?key={key}'
+    payload = {
+        'input':              {'ssml': ssml},
+        'voice':              {'languageCode': lang_code, 'name': voice_name},
+        'audioConfig':        {'audioEncoding': 'MP3', 'speakingRate': 1.10, 'pitch': 0.0},
+        'enableTimePointing': ['SSML_MARK'],   # returns timepoints for <mark> tags
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(url, json=payload)
+        if r.status_code == 200:
+            data = r.json()
+            return {
+                'audio':      data.get('audioContent', ''),
+                'voice':      voice_name,
+                'timepoints': data.get('timepoints', []),   # [{markName, timeSeconds}, ...]
+            }
+        raise HTTPException(status_code=502, detail=f'Google TTS failed ({r.status_code}): {r.text[:300]}')
+
+
 # ── Serve uploaded images ──────────────────────────────────────
 _uploads_dir = Path(__file__).parent.parent / '.tmp' / 'uploads'
 _uploads_dir.mkdir(parents=True, exist_ok=True)
@@ -1348,4 +1671,18 @@ app.mount('/uploads', StaticFiles(directory=str(_uploads_dir)), name='uploads')
 # ── Serve React webapp (MUST be last — catches all remaining routes) ──
 _webapp_dist = Path(__file__).parent.parent / 'webapp' / 'dist'
 if _webapp_dist.exists():
+    from fastapi.responses import HTMLResponse, FileResponse
+    from fastapi import Request
+
+    # Serve index.html with no-cache so browser always fetches the latest build
+    @app.get('/', response_class=HTMLResponse)
+    @app.get('/index.html', response_class=HTMLResponse)
+    async def serve_index(_req: Request):
+        content = (_webapp_dist / 'index.html').read_text()
+        return HTMLResponse(content=content, headers={
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+        })
+
+    # Hashed assets (JS/CSS) can be cached long-term
     app.mount('/', StaticFiles(directory=str(_webapp_dist), html=True), name='webapp')

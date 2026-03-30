@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 
-export default function InputBar({ onSend, onImage, disabled }) {
+export default function InputBar({ onSend, onImage, onLedger, disabled }) {
   const [text, setText] = useState('')
   const fileRef = useRef()
   const textRef = useRef()
@@ -44,6 +44,25 @@ export default function InputBar({ onSend, onImage, disabled }) {
         style={{ display: 'none' }}
         onChange={handleFile}
       />
+
+      {/* Ledger entry button */}
+      {onLedger && (
+        <button
+          className="icon-btn"
+          onClick={onLedger}
+          disabled={disabled}
+          title="Manual entry (Khata Bahi)"
+          aria-label="Open ledger entry"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="#667781" strokeWidth="2"
+               strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <line x1="12" y1="3" x2="12" y2="21"/>
+            <line x1="3" y1="9" x2="21" y2="9"/>
+            <line x1="3" y1="15" x2="21" y2="15"/>
+          </svg>
+        </button>
+      )}
 
       {/* Camera / attach button */}
       <button

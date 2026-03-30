@@ -1,5 +1,11 @@
 const BASE = '/api'
 
+// Safely parse JSON — returns {} if the response is HTML/empty (e.g. proxy error)
+async function safeJson(r) {
+  const text = await r.text()
+  try { return JSON.parse(text) } catch { return {} }
+}
+
 export async function checkPhone(phone) {
   // Read-only check — does NOT create a store record
   const r = await fetch(`${BASE}/check?phone=${encodeURIComponent(phone)}`)
@@ -24,8 +30,9 @@ export async function sendMessage(phone, body, language = 'hinglish') {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ phone, body, language }),
   })
-  if (!r.ok) throw new Error((await r.json()).detail || 'Send failed')
-  return r.json()
+  const data = await safeJson(r)
+  if (!r.ok) throw new Error(data.detail || `Server error (${r.status})`)
+  return data
   // returns { user_message_id, bot_message_id, bot_reply, quick_replies, processing }
 }
 
@@ -35,8 +42,9 @@ export async function sendImage(phone, file, language = 'hinglish') {
   fd.append('file', file)
   fd.append('language', language)
   const r = await fetch(`${BASE}/image`, { method: 'POST', body: fd })
-  if (!r.ok) throw new Error((await r.json()).detail || 'Upload failed')
-  return r.json()
+  const data = await safeJson(r)
+  if (!r.ok) throw new Error(data.detail || `Server error (${r.status})`)
+  return data
   // returns { user_message_id, processing: true }
 }
 
@@ -86,8 +94,9 @@ export async function confirmTransactions(phone, transactions, botMessageId = nu
       original_transactions: originalTransactions,
     }),
   })
-  if (!r.ok) throw new Error('Confirm failed')
-  return r.json()
+  const data = await safeJson(r)
+  if (!r.ok) throw new Error(data.detail ? JSON.stringify(data.detail) : `Server error (${r.status})`)
+  return data
 }
 
 export async function quickParse(description, amount, personName = '') {
@@ -114,10 +123,35 @@ export async function fetchPersonDuesHistory(phone, personName) {
   return r.json()
 }
 
+export async function classifyLedger(phone, date, rows, language = 'hinglish') {
+  const r = await fetch(`${BASE}/ledger-classify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone, date, rows, language }),
+  })
+  if (!r.ok) throw new Error((await r.json()).detail || 'Classify failed')
+  return r.json()
+  // returns { message_id, pending_transactions, response_message }
+}
+
 export async function dismissMessage(phone, botMessageId) {
   const r = await fetch(`${BASE}/dismiss?phone=${encodeURIComponent(phone)}&bot_message_id=${botMessageId}`, {
     method: 'POST',
   })
   if (!r.ok) return  // non-critical
   return r.json()
+}
+
+export async function speakLedger(inEntries, outEntries, dateStr, language = 'hinglish', dateFromPhoto = true) {
+  const r = await fetch(`${BASE}/tts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      in_entries: inEntries, out_entries: outEntries,
+      date_str: dateStr, language,
+      date_from_photo: dateFromPhoto,
+    }),
+  })
+  if (!r.ok) throw new Error('TTS unavailable')
+  return r.json()  // { audio: '<base64 mp3>', voice: '...' }
 }

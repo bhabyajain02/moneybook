@@ -183,6 +183,10 @@ so the UI can render entries in the same format as the original notebook.
   "txn_indices": array of 0-based indexes into the transactions array, one per cell.
                  Use null for a cell that is a heading, divider, running total, or blank.
                  IMPORTANT: txn_indices must have exactly the same length as cells.
+                 CRITICAL: txn_indices[i] maps to cells[i] — the position MUST match.
+                   If a row has only a right-column entry, cells=["", "60 Phenyl"] →
+                   txn_indices=[null, 5]  NOT [5, null].
+                   If only left column: cells=["1000 Ramesh", ""] → txn_indices=[2, null].
                  Example for a two-column row ["1000 Ramesh", "60 Phenyl"]:
                    "txn_indices": [2, 5]  ← cell[0]=txn[2], cell[1]=txn[5]
 
@@ -538,7 +542,7 @@ def parse_image_message(image_url: str = None,
         result_text = _call_claude(
             _VISION_MODEL, prompt,
             image_bytes=image_bytes, image_mime=image_mime,
-            use_thinking=True,   # ← Extended thinking enabled
+            use_thinking=False,
         )
         result = _safe_parse(result_text,
             "Photo padh nahi paya 📷\nAchhi roshni mein clear photo bhejiye.")
@@ -641,10 +645,9 @@ def is_trackable_person(name: str, description: str, txn_type: str, amount: floa
         text = _call_claude(_TEXT_MODEL, prompt)
         result = json.loads(_clean_json(text))
         verdict = result.get('is_person', False)
-        log.debug(f"is_trackable_person({name!r}): {verdict} — {result.get('reason','')}")
         return bool(verdict)
     except Exception as e:
-        log.warning(f"is_trackable_person failed for {name!r}: {e}")
+        print(f"is_trackable_person failed for {name!r}: {e}")
         return False   # safe default: never ask about something uncertain
 
 

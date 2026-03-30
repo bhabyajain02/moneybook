@@ -255,10 +255,9 @@ export default function ConfirmCard({ metadata, onConfirm, onCancel, onPendingEd
   const rawTxns  = metadata.pending_transactions || []
   const initDate = metadata.page_date || rawTxns[0]?.date || new Date().toISOString().slice(0, 10)
 
-  const [txns,        setTxns]        = useState(rawTxns)
-  const [batchDate,   setBatchDate]   = useState(initDate)
-  const [editingDate, setEditingDate] = useState(false)
-  const [adding,      setAdding]      = useState(false)
+  const [txns,      setTxns]    = useState(rawTxns)
+  const [batchDate, setBatchDate] = useState(initDate)
+  const [adding,    setAdding]    = useState(false)
 
   // Sync edits back to ChatWindow so tab navigation doesn't lose them
   function syncUp(newTxns) {
@@ -266,13 +265,13 @@ export default function ConfirmCard({ metadata, onConfirm, onCancel, onPendingEd
   }
 
   function handleBatchDate(newDate) {
+    if (!newDate) return
     setBatchDate(newDate)
     setTxns(prev => {
       const next = prev.map(t => t ? { ...t, date: newDate } : t)
       syncUp(next)
       return next
     })
-    setEditingDate(false)
   }
 
   function handleUpdate(idx, updated) {
@@ -304,21 +303,8 @@ export default function ConfirmCard({ metadata, onConfirm, onCancel, onPendingEd
       {/* Date row */}
       <div className="confirm-date-row">
         <span className="confirm-date-label">📅</span>
-        {editingDate ? (
-          <input type="date" className="confirm-date-input" defaultValue={batchDate} autoFocus
-            onBlur={e  => handleBatchDate(e.target.value)}
-            onChange={e => handleBatchDate(e.target.value)} />
-        ) : (
-          <>
-            <span className="confirm-date-value">
-              {batchDate
-                ? new Date(batchDate + 'T00:00:00').toLocaleDateString('en-IN',
-                    { day:'numeric', month:'short', year:'numeric' })
-                : 'Today'}
-            </span>
-            <button className="confirm-date-edit" onClick={() => setEditingDate(true)} title="Edit date">✏️</button>
-          </>
-        )}
+        <input type="date" className="confirm-date-inline" value={batchDate}
+          onChange={e => handleBatchDate(e.target.value)} />
       </div>
 
       {/* Summary totals */}

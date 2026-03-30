@@ -3,6 +3,7 @@ import MessageBubble from './MessageBubble.jsx'
 import TypingIndicator from './TypingIndicator.jsx'
 import QuickReplies from './QuickReplies.jsx'
 import InputBar from './InputBar.jsx'
+import LedgerEntry from './LedgerEntry.jsx'
 import { sendMessage, sendImage, pollMessages, confirmTransactions, dismissMessage } from '../api.js'
 
 const LANGUAGES = [
@@ -58,6 +59,9 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
   const [sending, setSending]             = useState(false)
   const [uploadPct, setUploadPct]         = useState(null)
   const [langOpen, setLangOpen]           = useState(false)
+  const [showLedger, setShowLedger]       = useState(false)
+  const [photoReview, setPhotoReview]     = useState(null)  // { msgId, txns, date }
+  const pendingPhotoRef = useRef(null)    // bridge from inside setMessages → outside
   const lastIdRef       = useRef(0)
   const bottomRef       = useRef()
   const pollRef         = useRef()
@@ -93,20 +97,37 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
           const fresh = data.messages.filter(m => !existing.has(m.id))
           if (fresh.length === 0) return prev
           lastIdRef.current = Math.max(lastIdRef.current, ...fresh.map(m => m.id))
-          // Capture originals for learning — only on first arrival, never overwrite
-          fresh.forEach(m => {
-            if (
-              m.direction === 'bot' &&
-              m.metadata?.pending_transactions &&
-              !originalTxnsRef.current[m.id]
-            ) {
-              originalTxnsRef.current[m.id] = JSON.parse(
-                JSON.stringify(m.metadata.pending_transactions)
-              )
+
+          const processed = fresh.map(m => {
+            if (m.direction === 'bot' && m.metadata?.pending_transactions?.length > 0) {
+              // Capture originals for learning — only on first arrival
+              if (!originalTxnsRef.current[m.id]) {
+                originalTxnsRef.current[m.id] = JSON.parse(
+                  JSON.stringify(m.metadata.pending_transactions)
+                )
+              }
+              // Photo-sourced → open modal, hide bot bubble
+              if (m.metadata?.display || m.metadata?.source === 'image') {
+                pendingPhotoRef.current = {
+                  msgId:   m.id,
+                  txns:    m.metadata.pending_transactions,
+                  date:    m.metadata.page_date,
+                  display: m.metadata.display || null,
+                }
+                return { ...m, metadata: { ...m.metadata, overwritten: true } }
+              }
             }
+            return m
           })
-          return [...prev, ...fresh]
+          return [...prev, ...processed]
         })
+
+        // Open photo review modal outside setMessages
+        if (pendingPhotoRef.current) {
+          setPhotoReview(pendingPhotoRef.current)
+          pendingPhotoRef.current = null
+        }
+
         // Update quick replies from latest bot message
         const latestBot = [...data.messages].reverse().find(m => m.direction === 'bot')
         if (latestBot?.quick_replies) setQuickReplies(latestBot.quick_replies)
@@ -225,6 +246,49 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
     ))
   }
 
+  // ── Ledger classify callback ───────────────────────────────────
+  async function handleLedgerClassified(result) {
+    if (result.message_id) {
+      lastIdRef.current = Math.max(lastIdRef.current, result.message_id - 1)
+    }
+    await poll()
+  }
+
+  // ── Photo modal confirm ────────────────────────────────────────
+  async function handlePhotoConfirm(editedTxns, msgId) {
+    const originals = originalTxnsRef.current[msgId] || null
+    try {
+      const resp = await confirmTransactions(phone, editedTxns, msgId, originals)
+      // Replace the hidden bot message with a SavedCard
+      setMessages(prev => prev.map(m =>
+        m.id === msgId
+          ? { ...m, metadata: { confirmed_transactions: resp.confirmed_transactions } }
+          : m
+      ))
+      delete originalTxnsRef.current[msgId]
+      // Close the modal BEFORE polling so handlePhotoCancel can't fire and
+      // call dismissMessage (which would wipe the classifying bot_state).
+      setPhotoReview(null)
+      // If backend started a classification flow, fetch it immediately
+      if (resp.classification_pending) await poll()
+    } catch (e) {
+      setMessages(prev => [...prev, {
+        id: Date.now(), direction: 'bot',
+        body: `⚠️ Save failed: ${e.message}`,
+        created_at: new Date().toISOString()
+      }])
+      setPhotoReview(null)
+    }
+  }
+
+  async function handlePhotoCancel() {
+    if (photoReview?.msgId) {
+      dismissMessage(phone, photoReview.msgId).catch(() => {})
+      delete originalTxnsRef.current[photoReview.msgId]
+    }
+    setPhotoReview(null)
+  }
+
   async function handleCancelConfirm(botMsgId) {
     // Remove the ConfirmCard message from chat immediately
     setMessages(prev => prev.filter(m => m.id !== botMsgId))
@@ -337,8 +401,36 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
       <InputBar
         onSend={handleSend}
         onImage={handleImage}
+        onLedger={() => setShowLedger(true)}
         disabled={sending}
       />
+
+      {/* ── Ledger entry modal (manual) ───────────────────────── */}
+      {showLedger && !photoReview && (
+        <LedgerEntry
+          phone={phone}
+          language={language}
+          onClose={() => setShowLedger(false)}
+          onClassified={handleLedgerClassified}
+        />
+      )}
+
+      {/* ── Photo review — exact Khata Bahi grid, pre-filled ──── */}
+      {photoReview && (
+        <LedgerEntry
+          phone={phone}
+          language={language}
+          onClose={handlePhotoCancel}
+          onClassified={handleLedgerClassified}
+          prefill={{
+            txns:    photoReview.txns,
+            display: photoReview.display,
+            msgId:   photoReview.msgId,
+            date:    photoReview.date,
+            onSave:  handlePhotoConfirm,
+          }}
+        />
+      )}
     </div>
   )
 }
