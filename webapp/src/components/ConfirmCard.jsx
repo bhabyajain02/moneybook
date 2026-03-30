@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { quickParse } from '../api.js'
 
-const TYPE_OPTIONS = [
+export const TYPE_OPTIONS = [
   { value: 'sale',             label: '💰 Sale' },
   { value: 'expense',          label: '💸 Expense' },
   { value: 'udhaar_given',     label: '📤 Udhaar Diya' },
@@ -14,7 +14,7 @@ const TYPE_OPTIONS = [
   { value: 'upi_in_hand',      label: '📱 UPI in Hand' },
 ]
 
-const TYPE_COLORS = {
+export const TYPE_COLORS = {
   sale:'#25D366', receipt:'#25D366', udhaar_given:'#E53935',
   udhaar_received:'#25D366', expense:'#FF7043', bank_deposit:'#9C27B0',
   opening_balance:'#607D8B', closing_balance:'#607D8B',
@@ -22,7 +22,7 @@ const TYPE_COLORS = {
 }
 const MODE_ICONS = { cash:'💵', upi:'📱', bank:'🏦', credit:'📒' }
 
-function fmtRs(val) {
+export function fmtRs(val) {
   const n = parseFloat(val) || 0
   if (n >= 100000) return `₹${(n/100000).toFixed(1)}L`
   if (n >= 1000)   return `₹${(n/1000).toFixed(1)}K`
@@ -30,7 +30,7 @@ function fmtRs(val) {
 }
 
 // ── Inline edit form (shared by both table and card layout) ──────
-function EditForm({ txn, onSave, onDiscard }) {
+export function EditForm({ txn, onSave, onDiscard }) {
   const [draft, setDraft]   = useState({ ...txn })
   const [saving, setSaving] = useState(false)
   const [more,   setMore]   = useState(false)
@@ -85,7 +85,7 @@ function EditForm({ txn, onSave, onDiscard }) {
 }
 
 // ── Confidence pill ──────────────────────────────────────────────
-function ConfPill({ value }) {
+export function ConfPill({ value }) {
   if (value == null) return null
   const v  = Math.round(value)
   const bg = v >= 80 ? '#dcfce7' : v >= 55 ? '#fef3c7' : '#fee2e2'
@@ -208,7 +208,7 @@ function TxnCard({ txn, index, onChange, onDelete }) {
 }
 
 // ── Add entry form ───────────────────────────────────────────────
-function AddEntryForm({ onAdd, onCancel }) {
+export function AddEntryForm({ onAdd, onCancel }) {
   const [desc, setDesc]     = useState('')
   const [amount, setAmount] = useState('')
   const [person, setPerson] = useState('')
@@ -255,10 +255,9 @@ export default function ConfirmCard({ metadata, onConfirm, onCancel, onPendingEd
   const rawTxns  = metadata.pending_transactions || []
   const initDate = metadata.page_date || rawTxns[0]?.date || new Date().toISOString().slice(0, 10)
 
-  const [txns,        setTxns]        = useState(rawTxns)
-  const [batchDate,   setBatchDate]   = useState(initDate)
-  const [editingDate, setEditingDate] = useState(false)
-  const [adding,      setAdding]      = useState(false)
+  const [txns,      setTxns]    = useState(rawTxns)
+  const [batchDate, setBatchDate] = useState(initDate)
+  const [adding,    setAdding]    = useState(false)
 
   // Sync edits back to ChatWindow so tab navigation doesn't lose them
   function syncUp(newTxns) {
@@ -266,13 +265,13 @@ export default function ConfirmCard({ metadata, onConfirm, onCancel, onPendingEd
   }
 
   function handleBatchDate(newDate) {
+    if (!newDate) return
     setBatchDate(newDate)
     setTxns(prev => {
       const next = prev.map(t => t ? { ...t, date: newDate } : t)
       syncUp(next)
       return next
     })
-    setEditingDate(false)
   }
 
   function handleUpdate(idx, updated) {
@@ -304,21 +303,8 @@ export default function ConfirmCard({ metadata, onConfirm, onCancel, onPendingEd
       {/* Date row */}
       <div className="confirm-date-row">
         <span className="confirm-date-label">📅</span>
-        {editingDate ? (
-          <input type="date" className="confirm-date-input" defaultValue={batchDate} autoFocus
-            onBlur={e  => handleBatchDate(e.target.value)}
-            onChange={e => handleBatchDate(e.target.value)} />
-        ) : (
-          <>
-            <span className="confirm-date-value">
-              {batchDate
-                ? new Date(batchDate + 'T00:00:00').toLocaleDateString('en-IN',
-                    { day:'numeric', month:'short', year:'numeric' })
-                : 'Today'}
-            </span>
-            <button className="confirm-date-edit" onClick={() => setEditingDate(true)} title="Edit date">✏️</button>
-          </>
-        )}
+        <input type="date" className="confirm-date-inline" value={batchDate}
+          onChange={e => handleBatchDate(e.target.value)} />
       </div>
 
       {/* Summary totals */}

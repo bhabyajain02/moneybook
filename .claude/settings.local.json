@@ -69,7 +69,56 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" -X POST https://api.github.com/user/repos -H \"Authorization: token REDACTED\" -H \"Content-Type: application/json\" -d '{\"\"name\"\":\"\"moneybook\"\",\"\"description\"\":\"\"MoneyBook - AI-powered financial tracker for kirana stores\"\",\"\"private\"\":false}')",
       "Bash(git remote:*)",
       "Bash(git push:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(curl -s http://localhost:3000)",
+      "Bash(node --input-type=module:*)",
+      "Bash(curl -s -X POST http://localhost:8000/api/confirm -H 'Content-Type: application/json' -d '{\"\"phone\"\":\"\"web:+919102662588\"\",\"\"transactions\"\":[{\"\"type\"\":\"\"sale\"\",\"\"description\"\":\"\"Test\"\",\"\"amount\"\":100,\"\"date\"\":\"\"2026-03-30\"\"}],\"\"bot_message_id\"\":null}')",
+      "Bash(curl -s -X POST http://localhost:8000/api/confirm -H 'Content-Type: application/json' -d '{\"\"phone\"\":\"\"web:+919102662588\"\",\"\"transactions\"\":[{\"\"type\"\":\"\"sale\"\",\"\"description\"\":\"\"Test\"\",\"\"amount\"\":100,\"\"date\"\":\"\"2026-03-30\"\"}],\"\"bot_message_id\"\":null,\"\"original_transactions\"\":null}')",
+      "Bash(sqlite3 /Users/bhabya.jain/go/.tmp/moneybook.db \"SELECT id, direction, body, created_at FROM messages WHERE id > 85 ORDER BY id DESC LIMIT 15;\")",
+      "Bash(sqlite3 /Users/bhabya.jain/go/.tmp/moneybook.db \"SELECT id, direction, substr\\(body,1,80\\), created_at FROM web_messages WHERE id > 85 ORDER BY id DESC LIMIT 15;\")",
+      "Bash(sqlite3 /Users/bhabya.jain/go/.tmp/moneybook.db \"UPDATE web_messages SET metadata = json_set\\(COALESCE\\(metadata,''{}''\\), ''$.dismissed'', 1\\) WHERE id IN \\(86,87,88,89,90,91,92\\);\")",
+      "Bash(sqlite3 /Users/bhabya.jain/go/.tmp/moneybook.db \"SELECT id, substr\\(body,1,60\\), metadata FROM web_messages ORDER BY id DESC LIMIT 6;\")",
+      "Bash(sqlite3 /Users/bhabya.jain/go/.tmp/moneybook.db \"SELECT id, direction, substr\\(body,1,100\\), metadata FROM web_messages WHERE id > 100 ORDER BY id;\")",
+      "Bash(sqlite3 /Users/bhabya.jain/go/.tmp/moneybook.db \"SELECT id, name, bot_state FROM stores WHERE id=5;\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" \"http://localhost:8000/api/messages?phone=test&after_id=0\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" -X POST \"http://localhost:8000/api/image\" -F \"phone=test\" -F \"file=@/dev/null;type=image/jpeg\" -F \"language=hinglish\")",
+      "Bash(curl -s -w \"\\\\n%{http_code}\" -X POST \"http://localhost:8000/api/image\" -F \"phone=test\" -F \"file=@/dev/null;type=image/jpeg\" -F \"language=hinglish\")",
+      "Bash(kill 91620)",
+      "Bash(pip show:*)",
+      "Bash(python3 -c \"import httpx; print\\(''httpx'', httpx.__version__\\)\")",
+      "Bash(python3 -c \"import requests; print\\(''requests'', requests.__version__\\)\")",
+      "Bash(curl -s -X POST \"http://localhost:8000/api/tts\" -H \"Content-Type: application/json\" -d '{\"\"\"\"in_entries\"\"\"\":[{\"\"\"\"desc\"\"\"\":\"\"\"\"Opening balance\"\"\"\",\"\"\"\"amount\"\"\"\":\"\"\"\"13184\"\"\"\"}],\"\"\"\"out_entries\"\"\"\":[{\"\"\"\"desc\"\"\"\":\"\"\"\"Transport to Kamal\"\"\"\",\"\"\"\"amount\"\"\"\":\"\"\"\"500\"\"\"\"}],\"\"\"\"date_str\"\"\"\":\"\"\"\"30 March 2026\"\"\"\",\"\"\"\"language\"\"\"\":\"\"\"\"hinglish\"\"\"\"}')",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d, indent=2\\)[:500]\\)\")",
+      "Bash(curl -s -X POST \"http://localhost:8000/api/tts\" -H \"Content-Type: application/json\" -d '{\"\"\"\"in_entries\"\"\"\":[{\"\"\"\"desc\"\"\"\":\"\"\"\"Opening balance\"\"\"\",\"\"\"\"amount\"\"\"\":\"\"\"\"13184\"\"\"\"}],\"\"\"\"out_entries\"\"\"\":[{\"\"\"\"desc\"\"\"\":\"\"\"\"Transport\"\"\"\",\"\"\"\"amount\"\"\"\":\"\"\"\"500\"\"\"\"}],\"\"\"\"date_str\"\"\"\":\"\"\"\"30 March 2026\"\"\"\",\"\"\"\"language\"\"\"\":\"\"\"\"hinglish\"\"\"\"}')",
+      "Bash(curl -s -X POST \"http://localhost:8000/api/tts\" -H \"Content-Type: application/json\" -d '{\"\"\"\"in_entries\"\"\"\":[{\"\"\"\"desc\"\"\"\":\"\"\"\"Opening balance\"\"\"\",\"\"\"\"amount\"\"\"\":\"\"\"\"13184\"\"\"\"},{\"\"\"\"desc\"\"\"\":\"\"\"\"Total sales\"\"\"\",\"\"\"\"amount\"\"\"\":\"\"\"\"158961\"\"\"\"}],\"\"\"\"out_entries\"\"\"\":[{\"\"\"\"desc\"\"\"\":\"\"\"\"Transport to Kamal\"\"\"\",\"\"\"\"amount\"\"\"\":\"\"\"\"500\"\"\"\"},{\"\"\"\"desc\"\"\"\":\"\"\"\"Rikshaw fare\"\"\"\",\"\"\"\"amount\"\"\"\":\"\"\"\"70\"\"\"\"}],\"\"\"\"date_str\"\"\"\":\"\"\"\"30 March 2026\"\"\"\",\"\"\"\"language\"\"\"\":\"\"\"\"hinglish\"\"\"\"}')",
+      "Bash(curl -s \"http://localhost:8000/api/tts\" -X POST -H \"Content-Type: application/json\" -d '{\"\"\"\"in_entries\"\"\"\":[{\"\"\"\"desc\"\"\"\":\"\"\"\"Test\"\"\"\",\"\"\"\"amount\"\"\"\":\"\"\"\"100\"\"\"\"}],\"\"\"\"out_entries\"\"\"\":[],\"\"\"\"date_str\"\"\"\":\"\"\"\"30 March 2026\"\"\"\",\"\"\"\"language\"\"\"\":\"\"\"\"hinglish\"\"\"\"}')",
+      "Skill(update-config)",
+      "Skill(update-config:*)",
+      "Bash(jq -e '.hooks.PostToolUse[] | select\\(.matcher == \"\"Edit|Write\"\"\\) | .hooks[] | select\\(.type == \"\"command\"\"\\) | .command' /Users/bhabya.jain/go/.claude/settings.local.json)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" -X POST \"https://texttospeech.googleapis.com/v1/text:synthesize?key=AIzaSyAAhsF9yIz1OK9hWl_FRRUPNveMEd65h8w\" -H \"Content-Type: application/json\" -d '{\"\"input\"\":{\"\"ssml\"\":\"\"<speak>Test <break time=\\\\\"\"300ms\\\\\"\"/> ek sau rupaye.</speak>\"\"},\"\"voice\"\":{\"\"languageCode\"\":\"\"hi-IN\"\",\"\"name\"\":\"\"hi-IN-Neural2-D\"\"},\"\"audioConfig\"\":{\"\"audioEncoding\"\":\"\"MP3\"\",\"\"speakingRate\"\":0.9}}')",
+      "Bash(curl -s -X POST \"https://texttospeech.googleapis.com/v1/text:synthesize?key=AIzaSyAAhsF9yIz1OK9hWl_FRRUPNveMEd65h8w\" -H \"Content-Type: application/json\" -d '{\"\"\"\"input\"\"\"\":{\"\"\"\"ssml\"\"\"\":\"\"\"\"<speak>Test.</speak>\"\"\"\"},\"\"\"\"voice\"\"\"\":{\"\"\"\"languageCode\"\"\"\":\"\"\"\"hi-IN\"\"\"\",\"\"\"\"name\"\"\"\":\"\"\"\"hi-IN-Neural2-D\"\"\"\"},\"\"\"\"audioConfig\"\"\"\":{\"\"\"\"audioEncoding\"\"\"\":\"\"\"\"MP3\"\"\"\"}}')",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d, indent=2\\)\\)\")",
+      "Bash(curl -s -X POST \"https://texttospeech.googleapis.com/v1/text:synthesize?key=AIzaSyAAhsF9yIz1OK9hWl_FRRUPNveMEd65h8w\" -H \"Content-Type: application/json\" -d '{\"\"\"\"input\"\"\"\":{\"\"\"\"ssml\"\"\"\":\"\"\"\"<speak>5 entries mili notebook mein. Tarikh 30 March 2026 ki hai. <break time=\\\\\"\"\"\"500ms\\\\\"\"\"\"/> Jama mein 2 entries: 1. Opening balance, 13184 rupaye. 2. Total sales, 5000 rupaye.</speak>\"\"\"\"},\"\"\"\"voice\"\"\"\":{\"\"\"\"languageCode\"\"\"\":\"\"\"\"hi-IN\"\"\"\",\"\"\"\"name\"\"\"\":\"\"\"\"hi-IN-Neural2-D\"\"\"\"},\"\"\"\"audioConfig\"\"\"\":{\"\"\"\"audioEncoding\"\"\"\":\"\"\"\"MP3\"\"\"\",\"\"\"\"speakingRate\"\"\"\":0.9}}')",
+      "Bash(curl -s -X POST \"http://localhost:8000/api/tts\" -H \"Content-Type: application/json\" -d '{\"\"\"\"in_entries\"\"\"\":[{\"\"\"\"desc\"\"\"\":\"\"\"\"Opening balance\"\"\"\",\"\"\"\"amount\"\"\"\":\"\"\"\"13184\"\"\"\"},{\"\"\"\"desc\"\"\"\":\"\"\"\"Total sales\"\"\"\",\"\"\"\"amount\"\"\"\":\"\"\"\"5000\"\"\"\"}],\"\"\"\"out_entries\"\"\"\":[{\"\"\"\"desc\"\"\"\":\"\"\"\"Transport\"\"\"\",\"\"\"\"amount\"\"\"\":\"\"\"\"500\"\"\"\"}],\"\"\"\"date_str\"\"\"\":\"\"\"\"30 March 2026\"\"\"\",\"\"\"\"language\"\"\"\":\"\"\"\"hinglish\"\"\"\"}')",
+      "Bash(curl -s -X POST \"http://localhost:8000/api/tts\" -H \"Content-Type: application/json\" -d '{\"\"\"\"in_entries\"\"\"\":[{\"\"\"\"desc\"\"\"\":\"\"\"\"Opening balance\"\"\"\",\"\"\"\"amount\"\"\"\":\"\"\"\"13184\"\"\"\"}],\"\"\"\"out_entries\"\"\"\":[],\"\"\"\"date_str\"\"\"\":\"\"\"\"30 March 2026\"\"\"\",\"\"\"\"language\"\"\"\":\"\"\"\"hinglish\"\"\"\"}')",
+      "Bash(python3 -c \"import sys,json; print\\(json.dumps\\(json.load\\(sys.stdin\\), indent=2\\)\\)\")",
+      "Bash(grep -c \"textarea\" /Users/bhabya.jain/go/webapp/dist/assets/index-*.js)",
+      "Bash(grep -o 'ledger-input-desc[^\"\"\"\"]*' /Users/bhabya.jain/go/webapp/dist/assets/index-*.js)",
+      "Bash(grep -o '.\\\\{20\\\\}ledger-input-desc.\\\\{50\\\\}' /Users/bhabya.jain/go/webapp/dist/assets/index-*.js)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path // empty' | { read -r f; echo \"$f\" | grep -q 'webapp/src/' && cd /Users/bhabya.jain/go/webapp && npm run build; } 2>/dev/null || true",
+            "statusMessage": "Building webapp..."
+          }
+        ]
+      }
     ]
   }
 }

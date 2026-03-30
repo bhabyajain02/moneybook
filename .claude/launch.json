@@ -3,9 +3,17 @@
   "configurations": [
     {
       "name": "moneybook",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8000"],
+      "runtimeExecutable": "uvicorn",
+      "runtimeArgs": ["execution.moneybook_webhook:app", "--reload", "--port", "8000"],
+      "cwd": "/Users/bhabya.jain/go",
       "port": 8000
+    },
+    {
+      "name": "webapp",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--", "--port", "3000"],
+      "cwd": "/Users/bhabya.jain/go/webapp",
+      "port": 3000
     }
   ]
 }

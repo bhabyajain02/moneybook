@@ -215,16 +215,23 @@ so the UI can render entries in the same format as the original notebook.
 
 "layout": the dominant page format you see —
   "table"      → multiple named columns (Date | Particulars | In | Out)
-  "two_column" → two columns (description/name on left, amount on right)
+  "two_column" → two side-by-side columns where each column contains independent entries
   "list"       → single column, one entry per line
 
 "headers": the column header labels you can read or infer, in left→right order.
   Empty array [] if no headers are visible.
 
 "rows": every data row on the page, top→bottom, left→right:
-  "cells"     : text of each cell exactly as written (or your best OCR read)
-  "txn_index" : 0-based index into the transactions array this row maps to.
-                null for section headings, date dividers, or running totals.
+  "cells"      : text of each cell exactly as written (or your best OCR read)
+  "txn_indices": array of 0-based indexes into the transactions array, one per cell.
+                 Use null for a cell that is a heading, divider, running total, or blank.
+                 IMPORTANT: txn_indices must have exactly the same length as cells.
+                 CRITICAL: txn_indices[i] maps to cells[i] — the position MUST match.
+                   If a row has only a right-column entry, cells=["", "60 Phenyl"] →
+                   txn_indices=[null, 5]  NOT [5, null].
+                   If only left column: cells=["1000 Ramesh", ""] → txn_indices=[2, null].
+                 Example for a two-column row ["1000 Ramesh", "60 Phenyl"]:
+                   "txn_indices": [2, 5]  ← cell[0]=txn[2], cell[1]=txn[5]
 
 Keep cells short and faithful to what is written — do not paraphrase here.
 
@@ -252,7 +259,7 @@ Produce your answer in <json> tags. Only content inside <json>...</json> is pars
     "layout": "<table|two_column|list>",
     "headers": ["<col1>", "<col2>"],
     "rows": [
-      {{ "cells": ["<text>", "<text>"], "txn_index": <int or null> }}
+      {{ "cells": ["<text>", "<text>"], "txn_indices": [<int or null>, <int or null>] }}
     ]
   }},
   "persons_found": ["Name1", "Name2"],
@@ -578,7 +585,7 @@ def parse_image_message(image_url: str = None,
         result_text = _call_claude(
             _VISION_MODEL, prompt,
             image_bytes=image_bytes, image_mime=image_mime,
-            use_thinking=True,   # ← Extended thinking enabled
+            use_thinking=False,
         )
         result = _safe_parse(result_text,
             _translate("Couldn't read the photo 📷\nPlease send a clear photo in good lighting.", language))
@@ -681,10 +688,9 @@ def is_trackable_person(name: str, description: str, txn_type: str, amount: floa
         text = _call_claude(_TEXT_MODEL, prompt)
         result = json.loads(_clean_json(text))
         verdict = result.get('is_person', False)
-        log.debug(f"is_trackable_person({name!r}): {verdict} — {result.get('reason','')}")
         return bool(verdict)
     except Exception as e:
-        log.warning(f"is_trackable_person failed for {name!r}: {e}")
+        print(f"is_trackable_person failed for {name!r}: {e}")
         return False   # safe default: never ask about something uncertain
 
 

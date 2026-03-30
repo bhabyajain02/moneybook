@@ -7,6 +7,7 @@
 
 import { useState } from 'react'
 import ConfirmCard from './ConfirmCard.jsx'
+import PhotoReviewCard from './PhotoReviewCard.jsx'
 import { deleteTransaction } from '../api.js'
 
 // ── Inline formatting ──────────────────────────────────────────
@@ -32,29 +33,47 @@ function formatTime(iso) {
   return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
 }
 
-// ── SavedCard: shown after ConfirmCard is confirmed ─────────────
-const TYPE_COLORS_SC = {
+// ── SavedCard: 2-column JAMA/NAAM format after confirmation ─────
+const SC_COLORS = {
   sale:'#25D366', receipt:'#25D366', udhaar_given:'#E53935',
   udhaar_received:'#25D366', expense:'#FF7043', bank_deposit:'#9C27B0',
   opening_balance:'#607D8B', closing_balance:'#607D8B',
   cash_in_hand:'#607D8B', upi_in_hand:'#2196F3',
 }
-const TYPE_LABELS_SC = {
+const SC_LABELS = {
   sale:'💰 Sale', receipt:'📨 Receipt', udhaar_given:'📤 Udhaar Diya',
   udhaar_received:'📥 Udhaar Mila', expense:'💸 Expense',
   bank_deposit:'🏦 Bank', opening_balance:'🔓 Opening', closing_balance:'🔒 Closing',
   cash_in_hand:'💵 Cash', upi_in_hand:'📱 UPI',
 }
+const SC_IN  = new Set(['sale','receipt','udhaar_received','cash_in_hand','upi_in_hand','opening_balance'])
+const SC_OUT = new Set(['expense','udhaar_given','bank_deposit','closing_balance'])
 
-function SavedCard({ transactions: initialTxns, phone, createdAt }) {
+function SavedCell({ txn, onDelete }) {
+  if (!txn) return <div className="sc-cell-empty" />
+  const color = SC_COLORS[txn.type] || '#94a3b8'
+  const label = SC_LABELS[txn.type] || txn.type
+  return (
+    <div className="sc-cell" style={{ borderLeftColor: color }}>
+      <span className="sc-type" style={{ color, background: color + '18' }}>{label}</span>
+      <div className="sc-desc">{txn.description || '—'}</div>
+      <div className="sc-amount">₹{parseFloat(txn.amount).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+      {txn.person_name && <div className="sc-person">👤 {txn.person_name}</div>}
+      {txn.id && (
+        <button className="sc-delete" onClick={() => onDelete(txn.id)} title="Delete">🗑️</button>
+      )}
+    </div>
+  )
+}
+
+function SavedCard({ transactions: initialTxns, phone }) {
   const [txns, setTxns] = useState(initialTxns || [])
 
-  async function handleDelete(txnId, idx) {
-    if (!txnId) return
+  async function handleDelete(txnId) {
     if (!window.confirm('Delete this entry?')) return
     try {
       await deleteTransaction(phone, txnId)
-      setTxns(prev => prev.filter((_, i) => i !== idx))
+      setTxns(prev => prev.filter(t => t.id !== txnId))
     } catch (e) {
       alert('Delete failed: ' + e.message)
     }
@@ -64,79 +83,122 @@ function SavedCard({ transactions: initialTxns, phone, createdAt }) {
     return <div className="saved-card saved-card-empty">🗑️ All entries deleted</div>
   }
 
-  const totalIn  = txns.filter(t => ['sale','receipt','udhaar_received'].includes(t.type))
-                       .reduce((s, t) => s + (parseFloat(t.amount) || 0), 0)
-  const totalOut = txns.filter(t => ['expense','udhaar_given','bank_deposit'].includes(t.type))
-                       .reduce((s, t) => s + (parseFloat(t.amount) || 0), 0)
+  const inEntries    = txns.filter(t => SC_IN.has(t.type))
+  const outEntries   = txns.filter(t => SC_OUT.has(t.type))
+  const otherEntries = txns.filter(t => !SC_IN.has(t.type) && !SC_OUT.has(t.type))
+  const maxRows      = Math.max(inEntries.length, outEntries.length)
+
+  const totalIn  = inEntries .reduce((s, t) => s + (parseFloat(t.amount) || 0), 0)
+  const totalOut = outEntries.reduce((s, t) => s + (parseFloat(t.amount) || 0), 0)
+
+  const cardDate = txns[0]?.date
+  const dateStr = cardDate
+    ? new Date(cardDate + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })
+    : null
 
   return (
-    <div className="saved-card">
-      <div className="saved-card-header">
-        ✅ {txns.length} entr{txns.length === 1 ? 'y' : 'ies'} saved
-        {(totalIn > 0 || totalOut > 0) && (
-          <span className="saved-card-totals">
-            {totalIn  > 0 && <span style={{color:'#25D366'}}>  +₹{totalIn.toLocaleString('en-IN')}</span>}
-            {totalOut > 0 && <span style={{color:'#E53935'}}>  −₹{totalOut.toLocaleString('en-IN')}</span>}
-          </span>
-        )}
+    <div className="saved-card saved-card-2col">
+      {/* Header */}
+      <div className="sc-header">
+        <span>✅ {txns.length} entr{txns.length === 1 ? 'y' : 'ies'} saved</span>
+        <span className="sc-header-totals">
+          {totalIn  > 0 && <span className="sc-total-in">+₹{totalIn.toLocaleString('en-IN')}</span>}
+          {totalOut > 0 && <span className="sc-total-out">−₹{totalOut.toLocaleString('en-IN')}</span>}
+        </span>
       </div>
-      {txns.map((t, i) => {
-        const color = TYPE_COLORS_SC[t.type] || '#666'
-        const label = TYPE_LABELS_SC[t.type] || t.type
-        return (
-          <div key={i} className="saved-entry-row">
-            <span className="saved-entry-type" style={{color, background: color+'18'}}>
-              {label}
-            </span>
-            <span className="saved-entry-body">
-              <span className="saved-entry-desc">{t.description || '—'}</span>
-              {t.person_name && <span className="saved-entry-person"> · 👤{t.person_name}</span>}
-              {t.date && <span className="saved-entry-date"> · {t.date}</span>}
-            </span>
-            <span className="saved-entry-amount">₹{parseFloat(t.amount).toLocaleString('en-IN')}</span>
-            <button
-              className="saved-entry-delete"
-              onClick={() => handleDelete(t.id, i)}
-              title="Delete this entry"
-            >🗑️</button>
+      {dateStr && <div className="sc-date-row">{dateStr}</div>}
+
+      {/* 2-column grid */}
+      <div className="sc-col-headers">
+        <div className="sc-col-label sc-jama-label">जमा IN</div>
+        <div className="sc-vdivider" />
+        <div className="sc-col-label sc-naam-label">नाम OUT</div>
+      </div>
+
+      <div className="sc-grid-rows">
+        {Array.from({ length: maxRows }).map((_, i) => (
+          <div key={i} className="sc-grid-row">
+            <div className="sc-col">
+              <SavedCell txn={inEntries[i] ?? null} onDelete={handleDelete} />
+            </div>
+            <div className="sc-vdivider" />
+            <div className="sc-col">
+              <SavedCell txn={outEntries[i] ?? null} onDelete={handleDelete} />
+            </div>
           </div>
-        )
-      })}
+        ))}
+      </div>
+
+      {/* Other entries (spanning full width) */}
+      {otherEntries.map((t, i) => (
+        <div key={`other-${i}`} className="sc-other-row">
+          <SavedCell txn={t} onDelete={handleDelete} />
+        </div>
+      ))}
+
+      {/* Totals row */}
+      {maxRows > 0 && (
+        <div className="sc-totals-row">
+          <div className="sc-col sc-total-cell">
+            {totalIn > 0 && <span className="sc-total-in">₹{totalIn.toLocaleString('en-IN')}</span>}
+          </div>
+          <div className="sc-vdivider" />
+          <div className="sc-col sc-total-cell">
+            {totalOut > 0 && <span className="sc-total-out">₹{totalOut.toLocaleString('en-IN')}</span>}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 // ── Main MessageBubble ──────────────────────────────────────────
-export default function MessageBubble({ msg, phone, onConfirm, onCancel, onPendingEdit }) {
+export default function MessageBubble({ msg, phone, onConfirm, onCancel, onPendingEdit, onOpenLedger }) {
   const { direction, body, media_url, created_at, metadata } = msg
   const isUser = direction === 'user'
 
   // Dismissed or overwritten → invisible (clean up chat)
   if (!isUser && (metadata?.dismissed || metadata?.overwritten)) return null
 
-  const pendingTxns   = !isUser && metadata?.pending_transactions
-  const confirmedTxns = !isUser && metadata?.confirmed_transactions
-  const showConfirmCard = pendingTxns?.length > 0 && onConfirm
+  const pendingTxns    = !isUser && metadata?.pending_transactions
+  const confirmedTxns  = !isUser && metadata?.confirmed_transactions
+  // Photo-sourced messages have metadata.display — use the richer PhotoReviewCard
+  const isPhotoSource  = !isUser && !!metadata?.display
+
+  // Low-confidence detection: avg confidence < 55 across all entries → image unclear
+  const isLowConfImage = isPhotoSource && (() => {
+    const txns = pendingTxns || []
+    if (!txns.length) return true  // no entries parsed = completely unreadable
+    const avg = txns.reduce((s, t) => s + (t.confidence ?? 100), 0) / txns.length
+    return avg < 55
+  })()
+
+  const showLowConfWarning = isLowConfImage && onConfirm
+  const showPhotoReview = isPhotoSource && !isLowConfImage && pendingTxns?.length > 0 && onConfirm
+  const showConfirmCard = !isPhotoSource && pendingTxns?.length > 0 && onConfirm
   const showSavedCard   = confirmedTxns?.length > 0
 
   const count   = pendingTxns?.length || 0
   const txnDate = pendingTxns?.[0]?.date
 
+  // Full-width for photo review OR large saved cards (4+ entries)
+  const isWide = showPhotoReview || (showSavedCard && confirmedTxns.length >= 4)
+
   return (
-    <div className={`msg-row ${direction}`}>
+    <div className={`msg-row ${direction}${isWide ? ' msg-row--photo' : ''}`}>
       <div className="bubble">
-        {/* Image attachment */}
-        {media_url && (
+        {/* Image attachment — hidden when PhotoReviewCard is shown (it has its own thumbnail) */}
+        {media_url && !showPhotoReview && (
           <img src={media_url} alt="attachment" className="bubble-image"
                onClick={() => window.open(media_url, '_blank')} />
         )}
 
-        {/* Plain text — hidden when ConfirmCard or SavedCard is shown */}
-        {body && !showConfirmCard && !showSavedCard && (
+        {/* Plain text — hidden when any card is shown */}
+        {body && !showPhotoReview && !showConfirmCard && !showSavedCard && (
           <p className="bubble-text">{formatText(body)}</p>
         )}
 
-        {/* Compact header above ConfirmCard */}
+        {/* Compact header above text-sourced ConfirmCard */}
         {showConfirmCard && (
           <p className="confirm-header-text">
             📋 <b>{count} entries found</b>{txnDate ? ` · ${txnDate}` : ''}
@@ -144,7 +206,26 @@ export default function MessageBubble({ msg, phone, onConfirm, onCancel, onPendi
           </p>
         )}
 
-        {/* Confirm card (pending, not yet saved) */}
+        {/* Low-confidence image warning — open empty ledger for manual entry */}
+        {showLowConfWarning && (
+          <div className="low-conf-warning">
+            <div className="low-conf-icon">⚠️</div>
+            <div className="low-conf-text">
+              <b>Image not clear</b><br/>
+              <span>Could not read entries reliably. Please add details manually.</span>
+            </div>
+            <button className="low-conf-btn" onClick={() => { onCancel?.(); onOpenLedger?.() }}>
+              📋 Enter Manually
+            </button>
+          </div>
+        )}
+
+        {/* Photo Review Card — full-width, notebook-format (image-sourced) */}
+        {showPhotoReview && (
+          <PhotoReviewCard metadata={metadata} onConfirm={onConfirm} onCancel={onCancel} onPendingEdit={onPendingEdit} />
+        )}
+
+        {/* Confirm card — text-sourced transactions */}
         {showConfirmCard && (
           <ConfirmCard metadata={metadata} onConfirm={onConfirm} onCancel={onCancel} onPendingEdit={onPendingEdit} />
         )}
