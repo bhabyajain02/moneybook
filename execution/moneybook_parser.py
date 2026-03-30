@@ -44,6 +44,49 @@ if not _api_key:
 
 _client = anthropic.Anthropic(api_key=_api_key)
 
+# ─────────────────────────────────────────────
+# Dynamic language translation
+# All bot strings are written in English.
+# For non-English languages, Claude Haiku
+# translates on the fly with in-memory cache.
+# ─────────────────────────────────────────────
+import threading as _threading
+_translation_cache: dict = {}
+_translation_lock = _threading.Lock()
+
+
+def _translate(text: str, language: str) -> str:
+    """Translate bot message to chosen language. 'english' → returned as-is."""
+    if not language or language == 'english':
+        return text
+    cache_key = (language, text[:300])
+    with _translation_lock:
+        cached = _translation_cache.get(cache_key)
+    if cached:
+        return cached
+    try:
+        response = _client.messages.create(
+            model='claude-haiku-4-5',
+            max_tokens=800,
+            messages=[{'role': 'user', 'content': (
+                f'Translate the following message to {language}.\n'
+                'Rules:\n'
+                '- Preserve all emojis exactly\n'
+                '- Preserve *bold* and _italic_ markers unchanged\n'
+                '- Preserve ₹ symbol and all numbers unchanged\n'
+                '- Preserve /commands unchanged\n'
+                '- Preserve newlines and bullet structure\n'
+                '- Return ONLY the translated message\n\n'
+                f'Message:\n{text}'
+            )}]
+        )
+        translated = response.content[0].text.strip()
+        with _translation_lock:
+            _translation_cache[cache_key] = translated
+        return translated
+    except Exception:
+        return text  # graceful fallback
+
 # Models
 _TEXT_MODEL      = 'claude-haiku-4-5'    # fast + cheap for simple text messages
 _VISION_MODEL    = 'claude-opus-4-6'     # best available — most accurate for handwritten images
@@ -479,13 +522,13 @@ def parse_text_message(message: str, store_context: str = '', language: str = 'h
     try:
         text = _call_claude(_TEXT_MODEL, prompt)
         return _safe_parse(text,
-            "Samajh nahi aaya 🙏\nExample: 'Sale 5000 cash' ya 'Raju ne 500 udhaar liya'")
+            _translate("Couldn't understand 🙏\nExample: 'Sale 5000 cash' or 'Raju credit 500'", language))
     except anthropic.RateLimitError:
         return {'transactions': [], 'persons_found': [],
-                'response_message': '⚠️ AI busy hai. 1 minute baad dobara try karein.'}
+                'response_message': _translate('⚠️ AI is busy. Please try again in 1 minute.', language)}
     except Exception as e:
         return {'transactions': [], 'persons_found': [],
-                'response_message': f'⚠️ Error: {str(e)[:80]}. Dobara try karein.'}
+                'response_message': _translate(f'⚠️ Error: {str(e)[:80]}. Please try again.', language)}
 
 
 def parse_image_message(image_url: str = None,
@@ -538,13 +581,13 @@ def parse_image_message(image_url: str = None,
             use_thinking=True,   # ← Extended thinking enabled
         )
         result = _safe_parse(result_text,
-            "Photo padh nahi paya 📷\nAchhi roshni mein clear photo bhejiye.")
+            _translate("Couldn't read the photo 📷\nPlease send a clear photo in good lighting.", language))
         result['raw_ocr'] = '[single-pass with extended thinking]'
         return result
 
     except anthropic.RateLimitError:
         return {'transactions': [], 'persons_found': [],
-                'response_message': '⚠️ AI busy hai. 2 minute baad photo dobara bhejein.'}
+                'response_message': _translate('⚠️ AI is busy. Please resend the photo in 2 minutes.', language)}
     except Exception as e:
         return {'transactions': [], 'persons_found': [],
                 'response_message': f'Image error: {str(e)[:120]}'}
@@ -674,13 +717,17 @@ def classify_correction_scope(original_txn: dict, corrected_txn: dict,
 # WhatsApp message formatters
 # ─────────────────────────────────────────────────────────────
 
-def format_pending_confirmation(transactions: list, page_date: str = None) -> str:
+def format_pending_confirmation(transactions: list, page_date: str = None, language: str = 'hinglish') -> str:
     """Format a pending transaction list for confirmation.
     Web UI uses ConfirmCard and hides this text — this is shown on WhatsApp only.
     """
-    date_str = f' ({page_date})' if page_date else ''
-    header = f'📋 *{len(transactions)} entries padhi{date_str}:*\n'
-    lines  = [header]
+    date_str   = f' ({page_date})' if page_date else ''
+    n          = len(transactions)
+    header_en  = f'{n} entries read{date_str}:'
+    footer_en  = '✅ *yes* · ✏️ *wrong N* · ❌ *cancel*'
+    header     = f'📋 *{_translate(header_en, language)}*\n'
+    footer     = _translate(footer_en, language)
+    lines      = [header]
 
     _TYPE_META = {
         'opening_balance':  ('🔓', 'Opening Bal'),
@@ -711,23 +758,25 @@ def format_pending_confirmation(transactions: list, page_date: str = None) -> st
 
         lines.append(f'{i}. {emoji} {desc} — *₹{float(t["amount"]):,.0f}*')
 
-    lines.append('\n✅ *haan* · ✏️ *galat N* · ❌ *cancel*')
+    lines.append('\n' + footer)
     return '\n'.join(lines)
 
 
-def format_person_question(name: str, amount: float, description: str) -> str:
-    return (
-        f'👤 *{name}* kaun hai?\n'
+def format_person_question(name: str, amount: float, description: str, language: str = 'hinglish') -> str:
+    """Ask the store owner to classify a new person. Dynamically translated."""
+    base = (
+        f'👤 *{name}* — who is this?\n'
         f'_(₹{amount:,.0f} — {description})_\n\n'
         '1️⃣ Staff / Employee\n'
-        '2️⃣ Customer / Grahak\n'
+        '2️⃣ Customer\n'
         '3️⃣ Supplier / Party\n'
-        '4️⃣ Ghar ka kharcha / Personal\n\n'
-        'Number bhejein (1/2/3/4)'
+        '4️⃣ Home / Personal expense\n\n'
+        'Send number (1/2/3/4)'
     )
+    return _translate(base, language)
 
 
-def format_daily_summary(data: dict, store_name: str = 'Store') -> str:
+def format_daily_summary(data: dict, store_name: str = 'Store', language: str = 'hinglish') -> str:
     s    = data['summary']
     etag = data.get('expense_tags', {})
 
@@ -747,27 +796,27 @@ def format_daily_summary(data: dict, store_name: str = 'Store') -> str:
 
     has_income = opening or sales or ud_r or receipts
     if has_income:
-        lines.append('\n*📥 AAYA (Income)*')
+        lines.append('\n*📥 Income*')
         if opening:  lines.append(f'  🔓 Opening Balance:  ₹{opening:,.0f}')
-        if sales:    lines.append(f'  💰 Bikri / Sale:     ₹{sales:,.0f}')
+        if sales:    lines.append(f'  💰 Sale:             ₹{sales:,.0f}')
         if receipts: lines.append(f'  📨 Receipts:         ₹{receipts:,.0f}')
-        if ud_r:     lines.append(f'  📥 Udhaar Received:  ₹{ud_r:,.0f}')
+        if ud_r:     lines.append(f'  📥 Credit Received:  ₹{ud_r:,.0f}')
         total_in = opening + sales + ud_r + receipts
         lines.append(f'  {"─"*21}')
         lines.append(f'  *Total IN:           ₹{total_in:,.0f}*')
 
     if expenses > 0:
-        lines.append('\n*📤 GAYA — Kharcha by Category*')
+        lines.append('\n*📤 Expenses by Category*')
         for tag, amt in sorted(etag.items(), key=lambda x: -x[1]):
             lines.append(f'  {tag_emoji(tag)} {tag_label(tag)}: ₹{amt:,.0f}')
         lines.append(f'  {"─"*21}')
-        lines.append(f'  *Total Kharcha:      ₹{expenses:,.0f}*')
+        lines.append(f'  *Total Expenses:     ₹{expenses:,.0f}*')
 
     has_closing = bank or ud_g or cash or upi
     if has_closing:
-        lines.append('\n*🏦 BAAKI (Closing / Settled)*')
+        lines.append('\n*🏦 Closing / Settled*')
         if bank:  lines.append(f'  🏦 Bank Deposit:     ₹{bank:,.0f}')
-        if ud_g:  lines.append(f'  📤 Udhaar Diya:      ₹{ud_g:,.0f}')
+        if ud_g:  lines.append(f'  📤 Credit Given:     ₹{ud_g:,.0f}')
         if cash:  lines.append(f'  💵 Cash in Hand:     ₹{cash:,.0f}')
         if upi:   lines.append(f'  📱 UPI in Hand:      ₹{upi:,.0f}')
 
@@ -780,20 +829,21 @@ def format_daily_summary(data: dict, store_name: str = 'Store') -> str:
         lines.append(f'  Total IN:            ₹{total_in:,.0f}')
         lines.append(f'  Total Accounted:     ₹{total_accounted:,.0f}')
         if abs(diff) < 1:
-            lines.append('  ✅ *Balanced! Koi gap nahi.*')
+            lines.append('  ✅ *Balanced! No gap.*')
         elif diff > 0:
             lines.append(f'  ⚠️ *₹{diff:,.0f} UNACCOUNTED*')
-            lines.append('  → Cash gaya kahan? Check karo.')
+            lines.append('  → Where did the cash go? Please check.')
         else:
             lines.append(f'  ℹ️ ₹{abs(diff):,.0f} extra recorded than income.')
-            lines.append('  → Koi income entry missing ho sakti hai.')
+            lines.append('  → Some income entry might be missing.')
     elif not has_income and expenses > 0:
-        lines.append('\n_(Sirf kharcha data. Balance check ke liye opening + income bhi dijiye.)_')
+        lines.append('\n_(Expenses only. Add opening balance + income for a complete check.)_')
 
-    return '\n'.join(lines)
+    result = '\n'.join(lines)
+    return _translate(result, language)
 
 
-def format_period_summary(data: dict, store_name: str = 'Store') -> str:
+def format_period_summary(data: dict, store_name: str = 'Store', language: str = 'hinglish') -> str:
     s    = data['summary']
     etag = data.get('expense_tags', {})
 
@@ -813,10 +863,10 @@ def format_period_summary(data: dict, store_name: str = 'Store') -> str:
         '*📥 Income*',
         f'  💰 Total Sales:     ₹{sales:,.0f}',
     ]
-    if ud_r: lines.append(f'  📥 Udhaar Received: ₹{ud_r:,.0f}')
+    if ud_r: lines.append(f'  📥 Credit Received: ₹{ud_r:,.0f}')
 
     if expenses > 0:
-        lines += ['', '*📤 Kharcha by Category*']
+        lines += ['', '*📤 Expenses by Category*']
         for tag, amt in sorted(etag.items(), key=lambda x: -x[1]):
             lines.append(f'  {tag_emoji(tag)} {tag_label(tag)}: ₹{amt:,.0f}')
         lines += [f'  {"─"*21}', f'  *Total: ₹{expenses:,.0f}*']
@@ -824,10 +874,10 @@ def format_period_summary(data: dict, store_name: str = 'Store') -> str:
     if bank or ud_g:
         lines += ['', '*🏦 Other Outflows*']
         if bank:  lines.append(f'  🏦 Bank Deposits:    ₹{bank:,.0f}')
-        if ud_g:  lines.append(f'  📤 Udhaar Diya:      ₹{ud_g:,.0f}')
+        if ud_g:  lines.append(f'  📤 Credit Given:     ₹{ud_g:,.0f}')
 
     lines += ['', '─' * 22,
-              f'{"📈" if net >= 0 else "📉"} *Net (Sales − Kharcha): ₹{net:,.0f}*']
+              f'{"📈" if net >= 0 else "📉"} *Net (Sales − Expenses): ₹{net:,.0f}*']
 
     daily = data.get('daily_sales', [])
     if len(daily) > 1:
@@ -836,15 +886,16 @@ def format_period_summary(data: dict, store_name: str = 'Store') -> str:
         lines += [f'\n📅 Best day:  {best["date"]}  ₹{best["total"]:,.0f}',
                   f'📅 Worst day: {worst["date"]}  ₹{worst["total"]:,.0f}']
 
-    return '\n'.join(lines)
+    result = '\n'.join(lines)
+    return _translate(result, language)
 
 
-def format_udhaar_list(udhaar_list: list) -> str:
+def format_udhaar_list(udhaar_list: list, language: str = 'hinglish') -> str:
     if not udhaar_list:
-        return '✅ Koi udhaar nahi! Sab clear hai.'
+        return _translate('✅ No outstanding credit! All clear.', language)
     total = sum(u['balance'] for u in udhaar_list)
     lines = ['📋 *Outstanding Udhaar:*\n']
     for u in udhaar_list:
         lines.append(f'• {u["person_name"]}: ₹{u["balance"]:,.0f}')
     lines.append(f'\n💰 *Total: ₹{total:,.0f}*')
-    return '\n'.join(lines)
+    return _translate('\n'.join(lines), language)
