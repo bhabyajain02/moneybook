@@ -980,6 +980,15 @@ def update_message_metadata(msg_id: int, metadata) -> None:
         )
 
 
+def update_web_message_body(msg_id: int, body: str) -> None:
+    """Replace the body text of an existing web_messages row (e.g. to swap in a translated ack)."""
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE web_messages SET body = ? WHERE id = ?",
+            (body, msg_id)
+        )
+
+
 def delete_transaction(store_id: int, txn_id: int) -> bool:
     """Hard-delete a transaction row (only if it belongs to this store)."""
     with get_db() as conn:

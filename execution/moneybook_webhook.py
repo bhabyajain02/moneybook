@@ -52,6 +52,7 @@ from moneybook_db import (
     update_udhaar_contact,
     update_message_metadata, delete_transaction,
     get_person_udhaar_history,
+    update_web_message_body,
 )
 from moneybook_parser import (
     parse_text_message, parse_image_message, parse_correction,
@@ -91,53 +92,181 @@ SEGMENT_CHOICES = {
 }
 
 SEGMENT_LABELS = {
-    'textile':     '👗 Kapda / Textile',
-    'grocery':     '🛒 Grocery / Kiryana',
-    'pharmacy':    '💊 Dawai / Pharmacy',
+    'textile':     '👗 Textile / Clothing',
+    'grocery':     '🛒 Grocery / Kirana',
+    'pharmacy':    '💊 Pharmacy / Medicine',
     'hardware':    '🔧 Hardware / Tools',
-    'food':        '🍱 Khana / Food/Restaurant',
+    'food':        '🍱 Food / Restaurant',
     'electronics': '📱 Electronics',
-    'general':     '🏪 Aur kuch / Other',
+    'general':     '🏪 General / Other',
 }
 
-SEGMENT_MSG = (
-    "Aapka business kya hai?\n\n"
-    "1️⃣ Kapda / Textile\n"
-    "2️⃣ Grocery / Kiryana\n"
-    "3️⃣ Dawai / Pharmacy\n"
+_SEGMENT_MSG_EN = (
+    "What type of business do you have?\n\n"
+    "1️⃣ Textile / Clothing\n"
+    "2️⃣ Grocery / Kirana\n"
+    "3️⃣ Pharmacy / Medicine\n"
     "4️⃣ Hardware / Tools\n"
-    "5️⃣ Khana / Food\n"
+    "5️⃣ Food / Restaurant\n"
     "6️⃣ Electronics\n"
-    "7️⃣ Kuch aur / Other\n\n"
-    "_(Number bhejein — 1 se 7)_"
+    "7️⃣ Other\n\n"
+    "_(Send a number — 1 to 7)_"
 )
+
+def _get_segment_msg(language: str = 'hinglish') -> str:
+    return _translate(_SEGMENT_MSG_EN, language)
 
 PERSON_LABELS = {
     'staff':    '👷 Staff/Employee',
     'customer': '🛒 Customer',
     'supplier': '📦 Supplier/Party',
-    'home':     '🏠 Ghar ka kharcha',
+    'home':     '🏠 Home/Personal',
+}
+
+# ─────────────────────────────────────────────
+# Dynamic Language Translation
+# All bot strings are written in English.
+# For non-English languages, Claude Haiku
+# translates them on the fly and caches the
+# result — no hardcoded per-language strings.
+# ─────────────────────────────────────────────
+
+import threading as _threading
+import anthropic as _anthropic
+
+_anthropic_client = _anthropic.Anthropic(api_key=os.getenv('ANTHROPIC_API_KEY'))
+_translation_cache: dict = {}
+_translation_lock = _threading.Lock()
+
+
+def _translate(text: str, language: str) -> str:
+    """
+    Translate any bot message to the chosen language using Claude Haiku.
+    - 'english' and 'hinglish': returned as-is (text is already in English/Hinglish).
+    - All other languages: translated via Haiku, result cached in memory.
+    Formatting rules preserved: emojis, *bold*, _italic_, ₹, numbers, /commands.
+    Falls back to original text if the API call fails.
+    """
+    if not language or language == 'english':
+        return text
+
+    # Use first 300 chars as cache key (long texts may vary in whitespace)
+    cache_key = (language, text[:300])
+    with _translation_lock:
+        cached = _translation_cache.get(cache_key)
+    if cached:
+        return cached
+
+    try:
+        response = _anthropic_client.messages.create(
+            model='claude-haiku-4-5-20251001',
+            max_tokens=800,
+            messages=[{
+                'role': 'user',
+                'content': (
+                    f'Translate the following chat message to {language}.\n'
+                    'Rules (follow exactly):\n'
+                    '- Preserve all emojis exactly as they appear\n'
+                    '- Preserve markdown: *bold* and _italic_ wrappers unchanged\n'
+                    '- Preserve ₹ symbol and all numbers unchanged\n'
+                    '- Preserve /commands like /summary, /help unchanged\n'
+                    '- Preserve newlines and bullet structure\n'
+                    '- Return ONLY the translated message — no explanation, no prefix\n\n'
+                    f'Message:\n{text}'
+                )
+            }]
+        )
+        translated = response.content[0].text.strip()
+        with _translation_lock:
+            _translation_cache[cache_key] = translated
+        log.debug(f'Translated to {language}: {text[:60]!r} → {translated[:60]!r}')
+        return translated
+    except Exception as e:
+        log.warning(f'Translation failed (lang={language}): {e}')
+        return text  # graceful fallback
+
+
+# ── Base strings in English — dynamically translated at runtime for every language ──
+# Zero per-language hardcoding. _translate() handles ALL languages via Claude Haiku.
+
+_BASE = {
+    'image_ack':         '📷 Photo received! Reading it... please wait a moment ⏳',
+    'image_not_found':   "Couldn't find anything in the photo 🤔\nPlease send a clearer photo or type it manually.",
+    'image_error':       '⚠️ Error processing the photo. Please try again.\n({detail})',
+    'welcome':           '🏪 *Welcome to MoneyBook!*\n\nWhat is your store name?',
+    'name_thanks':       '✅ *{name}* — great name!',
+    'cancel_msg':        '❌ Cancelled. Send a new entry.',
+    'saved_all':         '✅ *{n} entries saved!*\n\nReady for next entry 📒',
+    'not_understood':    (
+        "Didn't understand 🤔\n\n"
+        "• *yes* → Save all\n"
+        "• *wrong 3* → Fix entry 3\n"
+        "• *3 tag electricity* → Change tag of entry 3\n"
+        "• *cancel* → Cancel"
+    ),
+    'fix_entry_prompt':  (
+        "✏️ *Fix entry {n}:*\n"
+        "_{desc} — ₹{amount}_\n\n"
+        "Send the correct info\n"
+        "_(e.g. 'amount was 750' or 'this was a credit entry')_"
+    ),
+    'entry_not_found':   'Entry {n} not found. Send a number between 1 and {total}.',
+    'tag_updated':       '🏷️ Entry {n} tag updated: {emoji} _{label}_',
+    'tag_not_found':     "Tag '{tag}' not found.\nAvailable tags:\n{tags}",
+    'correction_saved':  (
+        '✅ Entry {n} updated:\n'
+        '_{desc} — ₹{amount} {emoji}_\n\n'
+        '_{scope_emoji} Learned ({scope_label}) — will get it right next time_ 🧠'
+    ),
+    'classify_invalid':  'Please choose from 1, 2, 3, or 4:\n{options}',
+    'person_saved':      '✅ *{name}* → {label}\n\n',
+    'all_classified':    'Everyone registered! 🎉\nReady for next entry 📒',
+    'save_single':       '✅ Saved: {desc} — ₹{amount}\n   {emoji} _{label}_',
+    'no_amount':         "No amount found 🤔\nTry: 'Sale 5000' or send a notebook photo.\nType /help for commands.",
 }
 
 
-HELP_MSG = """\
-🏪 *MoneyBook — Aapka Digital Khata*
+def _t(key: str, language: str = 'hinglish', **kwargs) -> str:
+    """
+    Look up an English base string, apply any format kwargs, then
+    dynamically translate to the requested language via Claude Haiku.
+    Every language — including hinglish — goes through _translate().
+    """
+    base = _BASE.get(key, key)
+    text = base.format(**kwargs) if kwargs else base
+    return _translate(text, language)
 
-*Transaction log karo (naturally likhein):*
+
+# Universal confirm/cancel words — covers all languages.
+# The bot also tells users what to type in their own language,
+# so most users will type one of the universal words anyway.
+_CONFIRM_WORDS = {'haan', 'han', 'yes', 'ok', 'okay', 'sahi', '✅', 'haan sahi',
+                  'हाँ', 'हां', 'हा', 'हो', 'હા', 'confirm', 'save'}
+_CANCEL_WORDS  = {'cancel', 'रद्द', 'રદ', 'no', 'stop'}
+
+
+_HELP_MSG_BASE = """\
+🏪 *MoneyBook — Your Digital Account Book*
+
+*Log transactions naturally:*
 • Sale 5000 cash
-• Raju ne 500 udhaar liya
+• Raju ne 500 udhaar liya  _(credit given)_
 • CD A. Tiwari 695  _(Cash Discount)_
-• Bijli bill 800 diya
-• Bank mein 20000 jama kiya
-• 📷 Notebook page ki photo bhejein
+• Electricity bill 800
+• Bank deposit 20000
+• 📷 Send a photo of your notebook page
 
 *Commands:*
-• /summary  → Aaj ka hisaab (expense by category + cash check)
-• /month    → Is mahine ka summary
-• /quarter  → Is quarter ka summary
-• /year     → Is saal ka summary
-• /udhaar   → Outstanding udhaar list
-• /help     → Yeh message"""
+• /summary  → Today's accounts (expenses by category + cash check)
+• /month    → This month's summary
+• /quarter  → This quarter's summary
+• /year     → This year's summary
+• /udhaar   → Outstanding credit list
+• /help     → This message"""
+
+
+def _get_help_msg(language: str = 'hinglish') -> str:
+    return _translate(_HELP_MSG_BASE, language)
 
 COMMANDS = {
     '/summary': 'summary', 'summary': 'summary',
@@ -211,16 +340,16 @@ def detect_command(text: str) -> Optional[str]:
     return None
 
 
-def run_command(action: str, store: dict) -> str:
+def run_command(action: str, store: dict, language: str = 'hinglish') -> str:
     from datetime import date as dt
     sid  = store['id']
     name = store.get('name', 'Store')
 
     if action == 'summary':
-        return format_daily_summary(get_daily_summary(sid), name)
+        return format_daily_summary(get_daily_summary(sid), name, language)
 
     if action == 'udhaar':
-        return format_udhaar_list(get_udhaar_outstanding(sid))
+        return format_udhaar_list(get_udhaar_outstanding(sid), language)
 
     if action == 'month':
         today = dt.today()
@@ -228,7 +357,7 @@ def run_command(action: str, store: dict) -> str:
         end   = today.isoformat()
         month_name = today.strftime('%B %Y')
         data  = get_period_summary(sid, start, end, label=month_name)
-        return format_period_summary(data, name)
+        return format_period_summary(data, name, language)
 
     if action == 'quarter':
         today = dt.today()
@@ -237,16 +366,16 @@ def run_command(action: str, store: dict) -> str:
         end   = today.isoformat()
         q_num = (today.month - 1) // 3 + 1
         data  = get_period_summary(sid, start, end, label=f'Q{q_num} {today.year}')
-        return format_period_summary(data, name)
+        return format_period_summary(data, name, language)
 
     if action == 'year':
         today = dt.today()
         start = today.replace(month=1, day=1).isoformat()
         end   = today.isoformat()
         data  = get_period_summary(sid, start, end, label=f'Year {today.year}')
-        return format_period_summary(data, name)
+        return format_period_summary(data, name, language)
 
-    return HELP_MSG
+    return _get_help_msg(language)
 
 
 def save_confirmed_batch(store_id: int, transactions: list,
@@ -276,6 +405,7 @@ def handle_confirming(body: str, store: dict, state: dict) -> str:
     """Handle response when bot is in 'confirming' state."""
     sid  = store['id']
     t    = body.strip().lower()
+    lang = state.get('language', 'hinglish')
 
     pending      = state.get('pending', [])
     raw_message  = state.get('raw_message', '')
@@ -285,12 +415,12 @@ def handle_confirming(body: str, store: dict, state: dict) -> str:
     persons_map  = state.get('persons_map', {})
 
     # ── Cancel ──────────────────────────────────────
-    if t == 'cancel':
+    if t in _CANCEL_WORDS:
         clear_bot_state(sid)
-        return "❌ Cancel ho gaya. Naya entry bhejein."
+        return _t('cancel_msg', lang)
 
     # ── Haan = save all ─────────────────────────────
-    if t in ('haan', 'han', 'yes', 'ok', 'okay', 'sahi', '✅', 'haan sahi'):
+    if t in _CONFIRM_WORDS:
         save_confirmed_batch(sid, pending, raw_message, source, persons_map)
 
         # Check if any persons need classification (only those with needs_tracking=True)
@@ -323,22 +453,27 @@ def handle_confirming(body: str, store: dict, state: dict) -> str:
                 'persons_queue':  unknown,
                 'person_index':   0,
                 'persons_map':    persons_map,
+                'language':       lang,
             })
             amt  = txn_for_person.get('amount', 0)
             desc = txn_for_person.get('description', '')
             return (
-                f"✅ *{len(pending)} entries save ho gayi!*\n\n"
-                + format_person_question(next_person, float(amt), desc)
+                _t('saved_all', lang, n=len(pending)) + '\n\n'
+                + format_person_question(next_person, float(amt), desc, language=lang)
             )
         else:
             clear_bot_state(sid)
-            return f"✅ *{len(pending)} entries save ho gayi!*\n\nAgle entry ke liye ready hoon 📒"
+            return _t('saved_all', lang, n=len(pending))
 
     # ── Galat N = fix entry N ────────────────────────
     import re
     m = re.match(r'^galat\s+(\d+)$', t)
     if not m:
         m = re.match(r'^(\d+)\s+galat$', t)
+    if not m:
+        m = re.match(r'^wrong\s+(\d+)$', t)   # english alias
+    if not m:
+        m = re.match(r'^(\d+)\s+wrong$', t)
     if m:
         idx = int(m.group(1)) - 1
         if 0 <= idx < len(pending):
@@ -350,15 +485,12 @@ def handle_confirming(body: str, store: dict, state: dict) -> str:
             })
             tag   = entry.get('tag', 'other')
             emoji = TAG_META.get(tag, ('', '📝'))[1]
-            return (
-                f"✏️ *Entry {idx+1} theek karo:*\n"
-                f"_{entry.get('description','')} — ₹{float(entry['amount']):,.0f} "
-                f"{emoji}_\n\n"
-                "Sahi info bhejein\n"
-                "_(e.g. 'amount 750 tha' ya 'yeh Raju ka udhaar tha')_"
-            )
+            return _t('fix_entry_prompt', lang,
+                      n=idx+1,
+                      desc=f"{entry.get('description','')} {emoji}",
+                      amount=f"{float(entry['amount']):,.0f}")
         else:
-            return f"Entry {idx+1} nahi mili. 1 se {len(pending)} ke beech number bhejein."
+            return _t('entry_not_found', lang, n=idx+1, total=len(pending))
 
     # ── Tag change: "3 tag electricity" ────────────
     m_tag = re.match(r'^(\d+)\s+tag\s+(\w+)$', t)
@@ -371,21 +503,17 @@ def handle_confirming(body: str, store: dict, state: dict) -> str:
             emoji = TAG_META[new_tag][1]
             label = TAG_META[new_tag][0]
             return (
-                f"🏷️ Entry {idx+1} ka tag update hua: {emoji} _{label}_\n\n"
-                + format_pending_confirmation(pending, page_date)
+                _t('tag_updated', lang, n=idx+1, emoji=emoji, label=label) + '\n\n'
+                + format_pending_confirmation(pending, page_date, language=lang)
             )
         else:
             tag_list = ', '.join(TAG_META.keys())
-            return f"Tag '{new_tag}' nahi mila.\nAvailable tags:\n{tag_list}"
+            return _t('tag_not_found', lang, tag=new_tag, tags=tag_list)
 
     # ── Unrecognized ────────────────────────────────
     return (
-        "Samajh nahi aaya 🤔\n\n"
-        "• *haan* → Sab save karo\n"
-        "• *galat 3* → Entry 3 theek karo\n"
-        "• *3 tag electricity* → Entry 3 ka tag badlo\n"
-        "• *cancel* → Cancel\n\n"
-        + format_pending_confirmation(pending, page_date)
+        _t('not_understood', lang) + '\n\n'
+        + format_pending_confirmation(pending, page_date, language=lang)
     )
 
 
@@ -432,10 +560,15 @@ def handle_correcting(body: str, store: dict, state: dict) -> str:
                            target_scope=scope,
                            target_segment=store_segment if scope == 'segment' else None)
 
+    lang = state.get('language', 'hinglish')
     scope_emoji = {'global': '🌐', 'segment': '🏪', 'store': '🔒'}.get(scope, '🔒')
-    scope_label = {'global': 'sabhi stores ke liye',
-                   'segment': f'{store_segment} stores ke liye',
-                   'store':   'sirf aapke store ke liye'}.get(scope, '')
+    # Scope labels translated
+    _scope_labels_en = {
+        'global':  'for all stores',
+        'segment': f'for {store_segment} stores',
+        'store':   'for your store only',
+    }
+    scope_label = _translate(_scope_labels_en.get(scope, _scope_labels_en['store']), lang)
     log.info(f"Correction saved store={sid} entry={idx+1} scope={scope} segment={store_segment}")
 
     new_state = {**state, 'state': 'confirming', 'pending': pending}
@@ -445,11 +578,15 @@ def handle_correcting(body: str, store: dict, state: dict) -> str:
     tag   = corrected.get('tag', 'other')
     emoji = TAG_META.get(tag, ('', '📝'))[1]
     return (
-        f"✅ Entry {idx+1} update ho gayi:\n"
-        f"_{corrected.get('description','')} — ₹{float(corrected['amount']):,.0f} "
-        f"{emoji}_\n\n"
-        f"_{scope_emoji} Seekh liya ({scope_label}) — agli baar se sahi karunga_ 🧠\n\n"
-        + format_pending_confirmation(pending, state.get('page_date'))
+        _t('correction_saved', lang,
+           n=idx+1,
+           desc=corrected.get('description', ''),
+           amount=f"{float(corrected['amount']):,.0f}",
+           emoji=emoji,
+           scope_emoji=scope_emoji,
+           scope_label=scope_label)
+        + '\n\n'
+        + format_pending_confirmation(pending, state.get('page_date'), language=lang)
     )
 
 
@@ -463,18 +600,19 @@ def handle_classifying(body: str, store: dict, state: dict) -> str:
     sid   = store['id']
     queue = state.get('persons_queue', [])
     idx   = state.get('person_index', 0)
+    lang  = state.get('language', 'hinglish')
 
     choice = body.strip()
     if choice not in PERSON_CATEGORIES:
         names = '\n'.join([f"{k}️⃣ {v}" for k, v in PERSON_LABELS.items()])
-        return f"Please 1, 2, 3, ya 4 mein se choose karein:\n{names}"
+        return _t('classify_invalid', lang, options=names)
 
     category  = PERSON_CATEGORIES[choice]
     name      = queue[idx]
     save_person(sid, name, category)
 
-    label = PERSON_LABELS[category]
-    response = f"✅ *{name}* → {label}\n\n"
+    label    = PERSON_LABELS[category]
+    response = _t('person_saved', lang, name=name, label=label)
 
     # Advance to next unknown person
     idx += 1
@@ -484,10 +622,10 @@ def handle_classifying(body: str, store: dict, state: dict) -> str:
         next_name = unknown_remaining[0]
         next_idx  = queue.index(next_name)
         set_bot_state(sid, {**state, 'person_index': next_idx})
-        return response + format_person_question(next_name, 0, '')
+        return response + format_person_question(next_name, 0, '', language=lang)
     else:
         clear_bot_state(sid)
-        return response + "Sab log register ho gaye! 🎉\nAgle entry ke liye ready hoon 📒"
+        return response + _t('all_classified', lang)
 
 
 # ─────────────────────────────────────────────
@@ -503,6 +641,7 @@ def process_image_and_reply(from_number: str, media_url: str, body: str):
     try:
         store = get_or_create_store(from_number)
         sid   = store['id']
+        lang  = get_bot_state(sid).get('language', 'hinglish')
 
         ctx           = build_store_context(sid)   # per-store learning context
         parsed        = parse_image_message(media_url, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
@@ -513,15 +652,13 @@ def process_image_and_reply(from_number: str, media_url: str, body: str):
         raw_ocr       = parsed.get('raw_ocr', '')
 
         if not txns:
-            # If low confidence, show raw OCR so owner can verify what was read
             ocr_conf = parsed.get('ocr_confidence', 'high')
             if raw_ocr and ocr_conf in ('low', 'medium'):
-                reply = (f"Kuch nahi mila 🤔\n\n"
-                         f"*Maine yeh text padha:*\n_{raw_ocr[:400]}_\n\n"
-                         f"Sahi hai? Ya clearer photo bhejiye.")
-            else:
                 reply = (parsed.get('response_message') or
-                         "Photo se kuch nahi mila 🤔\nClear photo bhejiye ya manually type karein.")
+                         _t('image_not_found', lang) +
+                         f"\n\n*{raw_ocr[:400]}*")
+            else:
+                reply = (parsed.get('response_message') or _t('image_not_found', lang))
         else:
             set_bot_state(sid, {
                 'state':         'confirming',
@@ -531,15 +668,17 @@ def process_image_and_reply(from_number: str, media_url: str, body: str):
                 'raw_message':   body,
                 'source':        'image',
                 'page_date':     page_date,
-                'raw_ocr':       raw_ocr,     # stored for correction learning
+                'raw_ocr':       raw_ocr,
+                'language':      lang,
             })
-            reply = format_pending_confirmation(txns, page_date)
+            reply = format_pending_confirmation(txns, page_date, language=lang)
 
         send_whatsapp(from_number, reply)
         log.info(f"Image processed for {from_number}: {len(txns)} transactions found")
     except Exception as e:
         log.error(f"Background image processing failed: {e}")
-        send_whatsapp(from_number, f"⚠️ Photo process karne mein error: {str(e)[:100]}")
+        send_whatsapp(from_number, _t('image_error', lang if 'lang' in dir() else 'hinglish',
+                                      detail=str(e)[:100]))
 
 
 @app.post('/whatsapp')
@@ -561,36 +700,33 @@ async def whatsapp_webhook(
     sid   = store['id']
 
     # ── Onboarding ───────────────────────────────────────
+    wa_lang = get_bot_state(sid).get('language', 'hinglish')
     if store['onboarding_state'] == 'new':
         update_store(sid, onboarding_state='awaiting_name')
-        return twiml_reply(
-            "🏪 *MoneyBook mein aapka swagat hai!*\n\n"
-            "Aapka digital khata tayar ho raha hai.\n\n"
-            "Apne store ka naam kya hai?"
-        )
+        return twiml_reply(_t('welcome', wa_lang))
 
     if store['onboarding_state'] == 'awaiting_name':
         name = body or 'My Store'
         update_store(sid, name=name, onboarding_state='awaiting_segment')
-        return twiml_reply(f"✅ *{name}* — sundar naam!\n\n" + SEGMENT_MSG)
+        return twiml_reply(_t('name_thanks', wa_lang, name=name) + '\n\n' + _get_segment_msg(wa_lang))
 
     if store['onboarding_state'] == 'awaiting_segment':
         choice  = body.strip()
         segment = SEGMENT_CHOICES.get(choice, 'general')
         label   = SEGMENT_LABELS[segment]
         update_store(sid, segment=segment, onboarding_state='active')
-        return twiml_reply(
-            f"✅ Segment set: *{label}*\n\n"
-            "Ab se main aapke business ke hisaab se entries samjhunga.\n\n"
-            + HELP_MSG
-        )
+        return twiml_reply(_translate(
+            f"✅ Segment set: *{label}*\n\nFrom now I'll understand entries for your business type.\n\n"
+            + _HELP_MSG_BASE, wa_lang
+        ))
 
     # ── Image: respond instantly, process in background ──
     # Twilio has a 15-second webhook timeout. Image download + Gemini Vision
     # takes 20-30s, so we must return immediately and push the reply later.
     if has_media:
+        wa_lang = get_bot_state(sid).get('language', 'hinglish')
         background_tasks.add_task(process_image_and_reply, from_number, MediaUrl0, body)
-        return twiml_reply("📷 Photo mil gayi! Padh raha hoon... thoda wait karein ⏳")
+        return twiml_reply(_t('image_ack', wa_lang))
 
     # ── Conversation state machine (text only below) ─────
     bot_state = get_bot_state(sid)
@@ -599,7 +735,7 @@ async def whatsapp_webhook(
     # Commands always interrupt current state
     if detect_command(body) in ('help', 'summary', 'udhaar', 'month', 'quarter', 'year'):
         clear_bot_state(sid)
-        return twiml_reply(run_command(detect_command(body), store))
+        return twiml_reply(run_command(detect_command(body), store, language=wa_lang))
 
     if current == 'confirming':
         return twiml_reply(handle_confirming(body, store, bot_state))
@@ -613,22 +749,17 @@ async def whatsapp_webhook(
     # ── Idle: commands ───────────────────────────────────
     action = detect_command(body)
     if action:
-        return twiml_reply(run_command(action, store))
+        return twiml_reply(run_command(action, store, language=wa_lang))
 
     # ── Idle: parse text transaction ─────────────────────
-    ctx           = build_store_context(sid)   # inject per-store learning
-    parsed        = parse_text_message(body, store_context=ctx)
+    ctx           = build_store_context(sid)
+    parsed        = parse_text_message(body, store_context=ctx, language=wa_lang)
     txns          = [t for t in parsed.get('transactions', []) if t.get('amount', 0) > 0]
     persons_found = parsed.get('persons_found', [])
     page_date     = parsed.get('date')
 
     if not txns:
-        return twiml_reply(
-            parsed.get('response_message') or
-            "Koi amount nahi mila 🤔\n\n"
-            "Try: 'Sale 5000' ya notebook photo bhejiye.\n"
-            "/help ke liye type karein."
-        )
+        return twiml_reply(parsed.get('response_message') or _t('no_amount', wa_lang))
 
     # Single transaction → auto-save immediately
     if len(txns) == 1:
@@ -637,15 +768,17 @@ async def whatsapp_webhook(
         tag   = t.get('tag', 'other')
         emoji = TAG_META.get(tag, ('', '📝'))[1]
         label = TAG_META.get(tag, ('', '📝'))[0]
-        reply = (f"✅ Save: {t.get('description','')} — ₹{float(t['amount']):,.0f}\n"
-                 f"   {emoji} _{label}_")
+        reply = _t('save_single', wa_lang,
+                   desc=t.get('description', ''),
+                   amount=f"{float(t['amount']):,.0f}",
+                   emoji=emoji, label=label)
         if (t.get('person_name') and t.get('needs_tracking', False)
                 and t.get('tag') != 'cash_discount'
                 and not get_person(sid, t['person_name'])):
-            set_bot_state(sid, {'state': 'classifying',
+            set_bot_state(sid, {'state': 'classifying', 'language': wa_lang,
                                 'persons_queue': [t['person_name']], 'person_index': 0})
             reply += '\n\n' + format_person_question(
-                t['person_name'], float(t['amount']), t.get('description', ''))
+                t['person_name'], float(t['amount']), t.get('description', ''), language=wa_lang)
         return twiml_reply(reply)
 
     # Multiple transactions → show confirmation list
@@ -653,8 +786,9 @@ async def whatsapp_webhook(
         'state': 'confirming', 'pending': txns,
         'persons_found': persons_found, 'persons_map': {},
         'raw_message': body, 'source': 'text', 'page_date': page_date,
+        'language': wa_lang,
     })
-    return twiml_reply(format_pending_confirmation(txns, page_date))
+    return twiml_reply(format_pending_confirmation(txns, page_date, language=wa_lang))
 
 
 # ─────────────────────────────────────────────
@@ -673,9 +807,11 @@ def health():
 def job_daily_summary():
     log.info("⏰ Daily summaries...")
     for store in get_all_active_stores():
-        data = get_daily_summary(store['id'])
-        msg  = format_daily_summary(data, store.get('name', 'Store'))
-        msg += "\n\n_📒 MoneyBook Daily Report_"
+        state    = get_bot_state(store['id']) or {}
+        lang     = state.get('language', 'hinglish')
+        data     = get_daily_summary(store['id'])
+        msg      = format_daily_summary(data, store.get('name', 'Store'), lang)
+        msg     += "\n\n_📒 MoneyBook Daily Report_"
         send_whatsapp(store['phone'], msg)
 
 
@@ -685,11 +821,14 @@ def job_udhaar_alerts():
         aging = get_udhaar_aging(store['id'], days=30)
         if not aging:
             continue
+        state = get_bot_state(store['id']) or {}
+        lang  = state.get('language', 'hinglish')
         total = sum(u['balance'] for u in aging)
-        lines = [f"⚠️ *Purana Udhaar — {store.get('name','')}*\n"]
+        header_en = f"⚠️ *Old Credit Alert — {store.get('name','')}*\n"
+        lines = [_translate(header_en, lang)]
         for u in aging:
             days = (date.today() - date.fromisoformat(u['last_transaction_date'])).days
-            lines.append(f"• {u['person_name']}: ₹{u['balance']:,.0f} ({days} din)")
+            lines.append(f"• {u['person_name']}: ₹{u['balance']:,.0f} ({days} days)")
         lines.append(f"\nTotal: ₹{total:,.0f}")
         send_whatsapp(store['phone'], '\n'.join(lines))
 
@@ -759,9 +898,9 @@ def _quick_replies_for_state(bot_state: dict, pending: list) -> list:
     """Return appropriate quick reply strings based on current conversation state."""
     state = bot_state.get('state', 'idle')
     if state == 'confirming':
-        replies = ['haan']
-        for i in range(min(len(pending), 5)):   # offer galat for first 5 entries
-            replies.append(f'galat {i+1}')
+        replies = ['yes']
+        for i in range(min(len(pending), 5)):
+            replies.append(f'wrong {i+1}')
         replies.append('cancel')
         return replies
     if state == 'classifying':
@@ -780,13 +919,13 @@ def _process_web_message(phone: str, body: str, language: str = 'hinglish') -> d
     # ── Onboarding ────────────────────────────────────────
     if store['onboarding_state'] == 'new':
         update_store(sid, onboarding_state='awaiting_name')
-        reply = "🏪 *MoneyBook mein aapka swagat hai!*\n\nApne store ka naam kya hai?"
+        reply = _t('welcome', language)
         return {'reply': reply, 'quick_replies': [], 'processing': False}
 
     if store['onboarding_state'] == 'awaiting_name':
         name = body.strip() or 'My Store'
         update_store(sid, name=name, onboarding_state='awaiting_segment')
-        reply = f"✅ *{name}* — sundar naam!\n\n" + SEGMENT_MSG
+        reply = _t('name_thanks', language, name=name) + '\n\n' + _get_segment_msg(language)
         return {'reply': reply, 'quick_replies': [], 'processing': False}
 
     if store['onboarding_state'] == 'awaiting_segment':
@@ -794,19 +933,25 @@ def _process_web_message(phone: str, body: str, language: str = 'hinglish') -> d
         segment = SEGMENT_CHOICES.get(choice, 'general')
         label   = SEGMENT_LABELS[segment]
         update_store(sid, segment=segment, onboarding_state='active')
-        reply = f"✅ Segment set: *{label}*\n\nAb se main aapke business ke hisaab se entries samjhunga.\n\n" + HELP_MSG
+        reply = _translate(
+            f"✅ Segment set: *{label}*\n\nFrom now I'll understand entries for your business type.\n\n"
+            + _HELP_MSG_BASE, language
+        )
         return {'reply': reply, 'quick_replies': [], 'processing': False}
 
     # ── Commands always interrupt state ──────────────────
     action = detect_command(body)
     if action in ('help', 'summary', 'udhaar', 'month', 'quarter', 'year'):
         clear_bot_state(sid)
-        reply = run_command(action, store)
+        reply = run_command(action, store, language=language)
         return {'reply': reply, 'quick_replies': [], 'processing': False}
 
     # ── Conversation state machine ────────────────────────
     bot_state = get_bot_state(sid)
-    current   = bot_state.get('state', 'idle')
+    # Always keep language fresh in bot_state so handlers can read it
+    bot_state['language'] = language
+    set_bot_state(sid, bot_state)
+    current = bot_state.get('state', 'idle')
 
     if current == 'confirming':
         reply = handle_confirming(body, store, bot_state)
@@ -826,10 +971,9 @@ def _process_web_message(phone: str, body: str, language: str = 'hinglish') -> d
         return {'reply': reply, 'quick_replies': qr, 'processing': False}
 
     if current == 'classifying':
-        # Allow cancel to escape classifying state
-        if body.strip().lower() == 'cancel':
+        if body.strip().lower() in _CANCEL_WORDS:
             clear_bot_state(sid)
-            return {'reply': '❌ Classification cancelled. Koi nayi entry bhejein.', 'quick_replies': [], 'processing': False}
+            return {'reply': _t('cancel_msg', language), 'quick_replies': [], 'processing': False}
         reply = handle_classifying(body, store, bot_state)
         new_state = get_bot_state(sid)
         qr = _quick_replies_for_state(new_state, new_state.get('pending', []))
@@ -843,8 +987,7 @@ def _process_web_message(phone: str, body: str, language: str = 'hinglish') -> d
     page_date = parsed.get('date')
 
     if not txns:
-        reply = (parsed.get('response_message') or
-                 "Koi amount nahi mila 🤔\nTry: 'Sale 5000' ya notebook photo bhejiye.")
+        reply = parsed.get('response_message') or _t('no_amount', language)
         return {'reply': reply, 'quick_replies': [], 'processing': False}
 
     if len(txns) == 1:
@@ -853,13 +996,17 @@ def _process_web_message(phone: str, body: str, language: str = 'hinglish') -> d
         tag   = t.get('tag', 'other')
         emoji = TAG_META.get(tag, ('', '📝'))[1]
         label = TAG_META.get(tag, ((tag or 'other').replace('_',' ').title(), '📝'))[0]
-        reply = f"✅ Save: {t.get('description','')} — ₹{float(t['amount']):,.0f}\n   {emoji} _{label}_"
+        reply = _t('save_single', language,
+                   desc=t.get('description', ''),
+                   amount=f"{float(t['amount']):,.0f}",
+                   emoji=emoji, label=label)
         if (t.get('person_name') and t.get('needs_tracking', False)
                 and t.get('tag') != 'cash_discount'
                 and not get_person(sid, t['person_name'])):
-            set_bot_state(sid, {'state': 'classifying',
+            set_bot_state(sid, {'state': 'classifying', 'language': language,
                                 'persons_queue': [t['person_name']], 'person_index': 0})
-            reply += '\n\n' + format_person_question(t['person_name'], float(t['amount']), t.get('description',''))
+            reply += '\n\n' + format_person_question(t['person_name'], float(t['amount']),
+                                                     t.get('description', ''), language=language)
             return {'reply': reply, 'quick_replies': ['1','2','3','4'], 'processing': False,
                     'pending_transactions': [t]}
         return {'reply': reply, 'quick_replies': [], 'processing': False,
@@ -870,8 +1017,9 @@ def _process_web_message(phone: str, body: str, language: str = 'hinglish') -> d
         'state': 'confirming', 'pending': txns,
         'persons_found': persons_found, 'persons_map': {},
         'raw_message': body, 'source': 'text', 'page_date': page_date,
+        'language': language,
     })
-    reply = format_pending_confirmation(txns, page_date)
+    reply = format_pending_confirmation(txns, page_date, language=language)
     qr = _quick_replies_for_state(get_bot_state(sid), txns)
     return {'reply': reply, 'quick_replies': qr, 'processing': False,
             'pending_transactions': txns}
@@ -972,17 +1120,17 @@ async def api_send_image(
     # Save user message (image)
     user_msg_id = save_web_message(sid, 'user', body=None, media_url=media_url)
 
-    # Ack message while processing
-    ack_id = save_web_message(sid, 'bot', '📷 Photo mil gayi! Padh raha hoon... thoda wait karein ⏳')
+    # Save ack in English immediately (no blocking). Background task translates it.
+    ack_id = save_web_message(sid, 'bot', _BASE['image_ack'])
 
-    # Mark processing in bot_state
+    # Mark processing in bot_state (also persist language choice)
     current_state = get_bot_state(sid)
-    set_bot_state(sid, {**current_state, 'processing_image': True})
+    set_bot_state(sid, {**current_state, 'processing_image': True, 'language': language})
 
-    # Background: parse image and save reply
+    # Background: translate ack + parse image + save reply
     background_tasks.add_task(
         _process_web_image, phone, sid, str(filepath),
-        file.content_type or 'image/jpeg', media_url, language
+        file.content_type or 'image/jpeg', media_url, language, ack_id
     )
 
     return {
@@ -992,9 +1140,13 @@ async def api_send_image(
 
 
 def _process_web_image(phone: str, store_id: int, filepath: str,
-                       mime_type: str, media_url: str, language: str = 'hinglish'):
+                       mime_type: str, media_url: str, language: str = 'hinglish',
+                       ack_id: int = None):
     """Background: parse a locally-saved image and push reply to web_messages."""
     try:
+        # Translate ack text now (safe in background thread — blocking call is fine here)
+        if ack_id:
+            update_web_message_body(ack_id, _t('image_ack', language))
         ctx    = build_store_context(store_id)
         parsed = parse_image_message(
             image_url=None,
@@ -1008,8 +1160,7 @@ def _process_web_image(phone: str, store_id: int, filepath: str,
         page_date     = parsed.get('date')
 
         if not txns:
-            reply = (parsed.get('response_message') or
-                     "Photo se kuch nahi mila 🤔\nClear photo bhejiye ya manually type karein.")
+            reply = (parsed.get('response_message') or _t('image_not_found', language))
             save_web_message(store_id, 'bot', reply)
         else:
             store = get_or_create_store(phone)
@@ -1022,9 +1173,10 @@ def _process_web_image(phone: str, store_id: int, filepath: str,
                 'source':        'image',
                 'page_date':     page_date,
                 'raw_ocr':       parsed.get('raw_ocr', ''),
+                'language':      language,
             })
-            reply   = format_pending_confirmation(txns, page_date)
-            qr      = ['haan'] + [f'galat {i+1}' for i in range(min(len(txns), 5))] + ['cancel']
+            reply   = format_pending_confirmation(txns, page_date, language=language)
+            qr      = ['yes'] + [f'wrong {i+1}' for i in range(min(len(txns), 5))] + ['cancel']
             display = parsed.get('display', None)
             # Overwrite any previous unconfirmed ConfirmCard so only latest photo shows
             old_msgs = get_web_messages(store_id, after_id=0, limit=30)
@@ -1043,7 +1195,7 @@ def _process_web_image(phone: str, store_id: int, filepath: str,
     except Exception as e:
         log.error(f"Web image processing failed: {e}")
         save_web_message(store_id, 'bot',
-                         f"⚠️ Photo process karne mein error aaya. Dobara try karein.\n({str(e)[:80]})")
+                         _t('image_error', language, detail=str(e)[:80]))
     finally:
         # Clear processing flag
         try:
@@ -1204,13 +1356,19 @@ async def api_delete_transaction(phone: str, txn_id: int):
 # ─────────────────────────────────────────────────────────────────
 
 @app.get('/api/analytics')
-async def api_analytics(phone: str, period: str = 'day'):
-    """Returns analytics data for the given period."""
+async def api_analytics(phone: str, period: str = 'day',
+                        start: Optional[str] = None, end: Optional[str] = None):
+    """Returns analytics data for the given period or custom date range.
+    If start/end are provided they override the period preset.
+    """
     store = get_or_create_store(phone)
     sid = store['id']
     today = date.today()
 
-    if period == 'day':
+    if start and end:
+        # Custom range — use as-is (frontend sends YYYY-MM-DD)
+        pass
+    elif period == 'day':
         start = today.isoformat()
         end   = today.isoformat()
     elif period == 'week':
@@ -1337,6 +1495,45 @@ async def api_staff(phone: str):
     sid   = store['id']
     staff = get_staff_detail(sid)
     return {'staff': staff}
+
+
+
+@app.get('/api/profile')
+async def api_profile(phone: str):
+    """Return store profile info."""
+    store = get_store_by_phone(phone)
+    if not store:
+        raise HTTPException(status_code=404, detail='Store not found')
+    state    = get_bot_state(store['id']) or {}
+    language = state.get('language', store.get('language', 'hinglish'))
+    return {
+        'name':     store.get('name', ''),
+        'phone':    phone,
+        'segment':  store.get('segment', 'general'),
+        'language': language,
+        'joined':   store.get('created_at', ''),
+    }
+
+
+class ProfileUpdateRequest(BaseModel):
+    phone:    str
+    name:     Optional[str] = None
+    language: Optional[str] = None
+
+@app.post('/api/profile')
+async def api_profile_update(req: ProfileUpdateRequest):
+    """Update store name and/or language."""
+    store = get_store_by_phone(req.phone)
+    if not store:
+        raise HTTPException(status_code=404, detail='Store not found')
+    sid = store['id']
+    if req.name is not None:
+        update_store(sid, name=req.name.strip())
+    if req.language is not None:
+        state = get_bot_state(sid) or {}
+        state['language'] = req.language
+        set_bot_state(sid, state)
+    return {'ok': True}
 
 
 # ── Serve uploaded images ──────────────────────────────────────

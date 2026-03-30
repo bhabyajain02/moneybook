@@ -47,8 +47,11 @@ export async function pollMessages(phone, afterId = 0) {
   // returns { messages: [{id, direction, body, media_url, created_at}], processing }
 }
 
-export async function fetchAnalytics(phone, period = 'day') {
-  const r = await fetch(`${BASE}/analytics?phone=${encodeURIComponent(phone)}&period=${period}`)
+export async function fetchAnalytics(phone, period = 'day', start = null, end = null) {
+  let url = `${BASE}/analytics?phone=${encodeURIComponent(phone)}&period=${period}`
+  if (start) url += `&start=${start}`
+  if (end)   url += `&end=${end}`
+  const r = await fetch(url)
   if (!r.ok) throw new Error('Analytics fetch failed')
   return r.json()
 }
@@ -86,7 +89,11 @@ export async function confirmTransactions(phone, transactions, botMessageId = nu
       original_transactions: originalTransactions,
     }),
   })
-  if (!r.ok) throw new Error('Confirm failed')
+  if (!r.ok) {
+    let detail = `HTTP ${r.status}`
+    try { const d = await r.json(); detail = d.detail || JSON.stringify(d) } catch {}
+    throw new Error(detail)
+  }
   return r.json()
 }
 
@@ -111,6 +118,23 @@ export async function deleteTransaction(phone, txnId) {
 export async function fetchPersonDuesHistory(phone, personName) {
   const r = await fetch(`${BASE}/dues/person?phone=${encodeURIComponent(phone)}&name=${encodeURIComponent(personName)}`)
   if (!r.ok) throw new Error('Could not load history')
+  return r.json()
+}
+
+export async function fetchProfile(phone) {
+  const r = await fetch(`${BASE}/profile?phone=${encodeURIComponent(phone)}`)
+  if (!r.ok) throw new Error('Could not load profile')
+  return r.json()
+  // returns { name, phone, segment, language, joined }
+}
+
+export async function updateProfile(phone, { name, language } = {}) {
+  const r = await fetch(`${BASE}/profile`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone, name, language }),
+  })
+  if (!r.ok) throw new Error('Update failed')
   return r.json()
 }
 

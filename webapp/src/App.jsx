@@ -3,6 +3,7 @@ import LoginScreen from './components/LoginScreen.jsx'
 import ChatWindow from './components/ChatWindow.jsx'
 import AnalyticsPage from './components/AnalyticsPage.jsx'
 import DuesPage from './components/DuesPage.jsx'
+import ProfilePage from './components/ProfilePage.jsx'
 
 const LS_KEY  = 'moneybook_phone'
 const LS_NAME = 'moneybook_store_name'
@@ -69,6 +70,15 @@ export default function App() {
           <div style={{ display: activePage === 'dues' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
             <DuesPage phone={phone} storeName={storeName} />
           </div>
+          <div style={{ display: activePage === 'profile' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
+            <ProfilePage
+              phone={phone}
+              storeName={storeName}
+              language={language}
+              onLanguageChange={handleLanguageChange}
+              onLogout={handleLogout}
+            />
+          </div>
         </div>
 
         {/* Bottom Navigation */}
@@ -93,6 +103,13 @@ export default function App() {
           >
             <span className="nav-icon">👥</span>
             <span className="nav-label">Dues &amp; Staff</span>
+          </button>
+          <button
+            className={`nav-tab ${activePage === 'profile' ? 'active' : ''}`}
+            onClick={() => setActivePage('profile')}
+          >
+            <span className="nav-icon">👤</span>
+            <span className="nav-label">Profile</span>
           </button>
         </nav>
       </div>
