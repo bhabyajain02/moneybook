@@ -69,7 +69,6 @@ export default function InputBar({ onSend, onImage, onLedger, disabled }) {
         className="icon-btn"
         onClick={() => fileRef.current?.click()}
         disabled={disabled}
-        title="Photo bhejein"
         aria-label="Attach image"
       >
         {/* Camera icon */}

@@ -102,9 +102,11 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
   const [inRows, setInRows]           = useState(() => initRows().inRows)
   const [outRows, setOutRows]         = useState(() => initRows().outRows)
   const [loading, setLoading]         = useState(false)
-  const [speaking, setSpeaking]       = useState(false)
-  const [speakingIdx, setSpeakingIdx] = useState(null)  // { side:'in'|'out', rowIdx:number } | null
-  const [showConfirm, setShowConfirm] = useState(false)
+  const [speaking, setSpeaking]         = useState(false)
+  const [speakingIdx, setSpeakingIdx]   = useState(null)  // { side:'in'|'out', rowIdx:number } | null
+  const [speakingDate, setSpeakingDate] = useState(false)
+  const [audioMuted, setAudioMuted]     = useState(false)
+  const [showConfirm, setShowConfirm]   = useState(false)
   const overlayRef    = useRef()
   const audioRef      = useRef(null)   // holds the current Audio object
   const ttsIdxMapRef  = useRef({ in: [], out: [] })  // TTS entry index → inRows/outRows index
@@ -152,6 +154,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
   // dateFromPhoto: true = date was read from the notebook image
   //                false = date was not found, defaulted to today → stronger warning
   async function _speak(ir, or, dateFromPhoto = true) {
+    if (audioMuted) return
     if (audioRef.current) { audioRef.current.pause(); audioRef.current = null }
     window.speechSynthesis?.cancel()
     setSpeakingIdx(null)
@@ -185,7 +188,11 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             if (tp.timeSeconds <= t + 0.05) active = tp.markName
             else break
           }
-          if (active) {
+          if (active === 'date') {
+            setSpeakingDate(true)
+            setSpeakingIdx(null)
+          } else if (active) {
+            setSpeakingDate(false)
             const [side, idxStr] = active.split('_')
             const rowIdx = ttsIdxMapRef.current[side]?.[parseInt(idxStr)] ?? null
             setSpeakingIdx(rowIdx != null ? { side, rowIdx } : null)
@@ -193,8 +200,8 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
         })
       }
 
-      audio_el.onended = () => { setSpeaking(false); setSpeakingIdx(null) }
-      audio_el.onerror = () => { setSpeaking(false); setSpeakingIdx(null) }
+      audio_el.onended = () => { setSpeaking(false); setSpeakingIdx(null); setSpeakingDate(false) }
+      audio_el.onerror = () => { setSpeaking(false); setSpeakingIdx(null); setSpeakingDate(false) }
       await audio_el.play()
     } catch {
       _browserSpeak(ir, or, dateStr, language || 'hinglish')
@@ -203,6 +210,14 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
       }, 300)
     }
   }
+
+  // ── Shrink font for long descriptions on mount/update ──
+  useEffect(() => {
+    document.querySelectorAll('.ledger-input-desc').forEach(ta => {
+      const len = ta.value.length
+      ta.style.fontSize = len > 35 ? '9px' : len > 22 ? '10.5px' : '12px'
+    })
+  }, [inRows, outRows])
 
   // ── Auto-speak on open (prefill mode only) ───────────────────
   useEffect(() => {
@@ -288,20 +303,35 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             {isPrefill ? '📋 Review Entries' : '📒 Khata Bahi'}
           </span>
           {isPrefill && (
-            <button
-              className={`ledger-speak-btn${speaking ? ' ledger-speak-btn--active' : ''}`}
-              onClick={handleSpeak}
-              title="Entries sunein"
-              aria-label="Read entries aloud"
-            >
-              {speaking ? '🔊' : '🔈'}
-            </button>
+            <>
+              <button
+                className={`ledger-speak-btn${speaking ? ' ledger-speak-btn--active' : ''}`}
+                onClick={handleSpeak}
+                aria-label="Read entries aloud"
+                disabled={audioMuted}
+              >
+                {speaking ? '🔊' : '🔈'}
+              </button>
+              <button
+                className={`ledger-mute-btn${audioMuted ? ' ledger-mute-btn--on' : ''}`}
+                onClick={() => {
+                  if (!audioMuted && audioRef.current) {
+                    audioRef.current.pause(); audioRef.current = null
+                    setSpeaking(false); setSpeakingIdx(null); setSpeakingDate(false)
+                  }
+                  setAudioMuted(m => !m)
+                }}
+                aria-label={audioMuted ? 'Enable audio' : 'Mute audio'}
+              >
+                {audioMuted ? '🔇' : '🔉'}
+              </button>
+            </>
           )}
           <button className="ledger-close-btn" onClick={requestClose} aria-label="Close">✕</button>
         </div>
 
         {/* ── Date banner ── */}
-        <div className="ledger-date-banner">
+        <div className={`ledger-date-banner${speakingDate ? ' ledger-date-banner--speaking' : ''}`}>
           <span className="ledger-date-banner-icon">📅</span>
           <input type="date" className="ledger-date-banner-input-visible" value={date}
             onChange={e => setDate(e.target.value)} />
@@ -352,7 +382,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                         rows={1}
                         value={inRows[i].particulars}
                         onChange={e => updateRow('in', i, 'particulars', e.target.value)}
-                        onInput={e => { e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px' }}
+                        onInput={e => { const l = e.target.value.length; e.target.style.fontSize = l > 35 ? '9px' : l > 22 ? '10.5px' : '12px' }}
                       />
                       <input
                         className="ledger-input-amt"
@@ -378,7 +408,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                         rows={1}
                         value={outRows[i].particulars}
                         onChange={e => updateRow('out', i, 'particulars', e.target.value)}
-                        onInput={e => { e.target.style.height = 'auto'; e.target.style.height = e.target.scrollHeight + 'px' }}
+                        onInput={e => { const l = e.target.value.length; e.target.style.fontSize = l > 35 ? '9px' : l > 22 ? '10.5px' : '12px' }}
                       />
                       <input
                         className="ledger-input-amt"

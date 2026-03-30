@@ -153,7 +153,7 @@ function SavedCard({ transactions: initialTxns, phone }) {
 }
 
 // ── Main MessageBubble ──────────────────────────────────────────
-export default function MessageBubble({ msg, phone, onConfirm, onCancel, onPendingEdit }) {
+export default function MessageBubble({ msg, phone, onConfirm, onCancel, onPendingEdit, onOpenLedger }) {
   const { direction, body, media_url, created_at, metadata } = msg
   const isUser = direction === 'user'
 
@@ -164,7 +164,17 @@ export default function MessageBubble({ msg, phone, onConfirm, onCancel, onPendi
   const confirmedTxns  = !isUser && metadata?.confirmed_transactions
   // Photo-sourced messages have metadata.display — use the richer PhotoReviewCard
   const isPhotoSource  = !isUser && !!metadata?.display
-  const showPhotoReview = isPhotoSource && pendingTxns?.length > 0 && onConfirm
+
+  // Low-confidence detection: avg confidence < 55 across all entries → image unclear
+  const isLowConfImage = isPhotoSource && (() => {
+    const txns = pendingTxns || []
+    if (!txns.length) return true  // no entries parsed = completely unreadable
+    const avg = txns.reduce((s, t) => s + (t.confidence ?? 100), 0) / txns.length
+    return avg < 55
+  })()
+
+  const showLowConfWarning = isLowConfImage && onConfirm
+  const showPhotoReview = isPhotoSource && !isLowConfImage && pendingTxns?.length > 0 && onConfirm
   const showConfirmCard = !isPhotoSource && pendingTxns?.length > 0 && onConfirm
   const showSavedCard   = confirmedTxns?.length > 0
 
@@ -194,6 +204,20 @@ export default function MessageBubble({ msg, phone, onConfirm, onCancel, onPendi
             📋 <b>{count} entries found</b>{txnDate ? ` · ${txnDate}` : ''}
             <br/><span style={{fontSize:11,color:'#888'}}>Review and edit below, then save</span>
           </p>
+        )}
+
+        {/* Low-confidence image warning — open empty ledger for manual entry */}
+        {showLowConfWarning && (
+          <div className="low-conf-warning">
+            <div className="low-conf-icon">⚠️</div>
+            <div className="low-conf-text">
+              <b>Image not clear</b><br/>
+              <span>Could not read entries reliably. Please add details manually.</span>
+            </div>
+            <button className="low-conf-btn" onClick={() => { onCancel?.(); onOpenLedger?.() }}>
+              📋 Enter Manually
+            </button>
+          </div>
         )}
 
         {/* Photo Review Card — full-width, notebook-format (image-sourced) */}

@@ -1601,6 +1601,7 @@ def _build_ledger_text(in_entries: list, out_entries: list, date_str: str,
 
     # Date emphasis at the end — stronger warning if date was missing
     parts.append('<break time="900ms"/>')
+    parts.append('<mark name="date"/>')
     if date_from_photo:
         parts.append(ph['date_warn'])
         parts.append('<break time="400ms"/>')

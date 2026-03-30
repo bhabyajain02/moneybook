@@ -385,6 +385,7 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
                 onConfirm={isLastConfirm ? (txns) => handleConfirm(txns, msg.id) : null}
                 onCancel={isLastConfirm ? () => handleCancelConfirm(msg.id) : null}
                 onPendingEdit={isLastConfirm ? (txns) => handlePendingEdit(msg.id, txns) : null}
+                onOpenLedger={() => setShowLedger(true)}
               />
             )
           })
