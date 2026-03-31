@@ -1586,11 +1586,11 @@ async def api_update_contact(req: UpdateContactRequest):
 
 
 @app.get('/api/staff')
-async def api_staff(phone: str):
-    """Returns staff payment summary."""
+async def api_staff(phone: str, start: Optional[str] = None, end: Optional[str] = None):
+    """Returns staff payment summary, optionally filtered by date range."""
     store = get_or_create_store(phone)
     sid   = store['id']
-    staff = get_staff_detail(sid)
+    staff = get_staff_detail(sid, start=start, end=end)
     return {'staff': staff}
 
 

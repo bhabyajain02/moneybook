@@ -544,7 +544,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
           ...rowsToTxns(inRows, outRows, date),
           ...validDuesIn .map(r => ({ type: 'dues_received', description: r.desc || 'Dues received', bill_number: r.billNo || '', amount: parseFloat(r.amount) || 0, date })),
           ...validDuesOut.map(r => ({ type: 'dues_given',    description: r.desc || 'Dues given',    bill_number: r.billNo || '', amount: parseFloat(r.amount) || 0, date })),
-          ...validStaffIn  .map(r => ({ type: 'receipt', description: r.name || 'Staff',         person_name: r.name || '', amount: parseFloat(r.amount) || 0, date })),
+          ...validStaffIn  .map(r => ({ type: 'receipt', description: r.name || 'Staff',         person_name: r.name || '', tag: 'staff_expense', amount: parseFloat(r.amount) || 0, date })),
           ...validStaffOut .map(r => ({ type: 'expense', description: r.name || 'Staff expense', person_name: r.name || '', tag: 'staff_expense', amount: parseFloat(r.amount) || 0, date })),
           ...validOthersIn .map(r => ({ type: 'other',   description: r.name || 'Others', person_name: r.name || '', amount: parseFloat(r.amount) || 0, date, column: 'in' })),
           ...validOthersOut.map(r => ({ type: 'other',   description: r.name || 'Others', person_name: r.name || '', amount: parseFloat(r.amount) || 0, date, column: 'out' })),

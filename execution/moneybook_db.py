@@ -438,11 +438,12 @@ def get_period_summary(store_id: int, start_date: str, end_date: str, label: str
             ORDER BY total DESC
         """, (store_id, start_date, end_date)).fetchall()
 
-        # Staff expense total (matches both staff_salary and staff_expense tags)
+        # Staff expense total: expenses minus receipts (money returned by staff)
         staff_exp_row = conn.execute("""
-            SELECT SUM(amount) AS total
+            SELECT SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END)
+                 - SUM(CASE WHEN type = 'receipt' THEN amount ELSE 0 END) AS total
             FROM transactions
-            WHERE store_id = ? AND date BETWEEN ? AND ? AND type = 'expense'
+            WHERE store_id = ? AND date BETWEEN ? AND ?
               AND COALESCE(tag, '') IN ('staff_salary', 'staff_expense', 'staff expense')
         """, (store_id, start_date, end_date)).fetchone()
 
@@ -755,18 +756,21 @@ def get_daily_trend(store_id: int, start: str, end: str) -> list:
 
 def get_staff_payments(store_id: int, start: str, end: str) -> list:
     """Returns list of {person_name, total, count} for staff members.
-    Excludes cash_discount — those are store expenses, not staff payments."""
+    Net total = expenses paid to staff minus receipts from staff."""
     with get_db() as conn:
         rows = conn.execute("""
-            SELECT t.person_name, SUM(t.amount) AS total, COUNT(*) AS count
+            SELECT t.person_name,
+                   SUM(CASE WHEN t.type = 'expense' THEN t.amount ELSE 0 END)
+                 - SUM(CASE WHEN t.type = 'receipt' THEN t.amount ELSE 0 END) AS total,
+                   COUNT(*) AS count
             FROM transactions t
             INNER JOIN persons p ON p.store_id = t.store_id
                 AND p.name = t.person_name COLLATE NOCASE
                 AND p.category = 'staff'
             WHERE t.store_id = ? AND t.date BETWEEN ? AND ?
-              AND t.type = 'expense'
+              AND t.type IN ('expense', 'receipt')
               AND t.person_name IS NOT NULL
-              AND COALESCE(t.tag, '') != 'cash_discount'
+              AND COALESCE(t.tag, '') IN ('staff_salary', 'staff_expense', 'staff expense')
             GROUP BY t.person_name
             ORDER BY total DESC
         """, (store_id, start, end)).fetchall()
@@ -917,10 +921,14 @@ def get_person_udhaar_history(store_id: int, person_name: str) -> dict:
         }
 
 
-def get_staff_detail(store_id: int) -> list:
-    """Returns each staff person with total paid and recent payments."""
+def get_staff_detail(store_id: int, start: str = None, end: str = None) -> list:
+    """Returns each staff person with net total (expenses − receipts) and recent transactions.
+    If start/end provided, totals are filtered to that range."""
     today = date.today()
-    month_start = today.replace(day=1).isoformat()
+    if not start:
+        start = '2000-01-01'
+    if not end:
+        end = today.isoformat()
 
     with get_db() as conn:
         staff_names = conn.execute("""
@@ -936,45 +944,41 @@ def get_staff_detail(store_id: int) -> list:
             if not name:
                 continue
 
-            # All time total — exclude cash_discount (store expense, not staff payment)
-            total_all = conn.execute("""
-                SELECT COALESCE(SUM(amount), 0) FROM transactions
-                WHERE store_id = ? AND person_name = ? COLLATE NOCASE
-                  AND (person_category = 'staff' OR person_category IS NULL)
-                  AND type = 'expense'
-                  AND COALESCE(tag, '') != 'cash_discount'
-            """, (store_id, name)).fetchone()[0]
-
-            # This month total
-            total_month = conn.execute("""
-                SELECT COALESCE(SUM(amount), 0) FROM transactions
-                WHERE store_id = ? AND person_name = ? COLLATE NOCASE
-                  AND (person_category = 'staff' OR person_category IS NULL)
-                  AND type = 'expense' AND date >= ?
-                  AND COALESCE(tag, '') != 'cash_discount'
-            """, (store_id, name, month_start)).fetchone()[0]
-
-            # Recent payments — exclude discounts
-            recent = conn.execute("""
-                SELECT date, amount, description, payment_mode
+            # Net total in date range: expenses paid − receipts received
+            net_row = conn.execute("""
+                SELECT COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0)
+                     - COALESCE(SUM(CASE WHEN type = 'receipt' THEN amount ELSE 0 END), 0)
                 FROM transactions
                 WHERE store_id = ? AND person_name = ? COLLATE NOCASE
                   AND (person_category = 'staff' OR person_category IS NULL)
-                  AND type = 'expense'
+                  AND type IN ('expense', 'receipt')
+                  AND COALESCE(tag, '') IN ('staff_salary', 'staff_expense', 'staff expense', '')
                   AND COALESCE(tag, '') != 'cash_discount'
+                  AND date BETWEEN ? AND ?
+            """, (store_id, name, start, end)).fetchone()
+            net_total = net_row[0] if net_row else 0
+
+            # Recent transactions in range (both expenses and receipts)
+            recent = conn.execute("""
+                SELECT date, amount, description, payment_mode, type
+                FROM transactions
+                WHERE store_id = ? AND person_name = ? COLLATE NOCASE
+                  AND (person_category = 'staff' OR person_category IS NULL)
+                  AND type IN ('expense', 'receipt')
+                  AND COALESCE(tag, '') != 'cash_discount'
+                  AND date BETWEEN ? AND ?
                 ORDER BY date DESC, created_at DESC
-                LIMIT 5
-            """, (store_id, name)).fetchall()
+                LIMIT 10
+            """, (store_id, name, start, end)).fetchall()
 
             result.append({
                 'name':              name,
-                'total_all_time':    total_all,
-                'total_this_month':  total_month,
+                'net_total':         net_total,
                 'recent_payments':   [dict(r) for r in recent],
             })
 
-        # Sort by total all time desc
-        result.sort(key=lambda x: x['total_all_time'], reverse=True)
+        # Sort by absolute net total desc
+        result.sort(key=lambda x: abs(x['net_total']), reverse=True)
         return result
 
 

@@ -79,8 +79,11 @@ export async function updateDuesContact(phone, personName, contactPhone) {
   return r.json()
 }
 
-export async function fetchStaff(phone) {
-  const r = await fetch(`${BASE}/staff?phone=${encodeURIComponent(phone)}`)
+export async function fetchStaff(phone, start = null, end = null) {
+  let url = `${BASE}/staff?phone=${encodeURIComponent(phone)}`
+  if (start) url += `&start=${start}`
+  if (end) url += `&end=${end}`
+  const r = await fetch(url)
   if (!r.ok) throw new Error('Staff fetch failed')
   return r.json()
 }

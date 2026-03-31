@@ -18,6 +18,27 @@ function daysColor(days) {
   return '#F57C00'
 }
 
+/* ── Date helpers ────────────────────────────────────────── */
+function toISO(d) { return d.toISOString().slice(0, 10) }
+function getRange(period) {
+  const today = new Date()
+  if (period === 'month') return { start: toISO(new Date(today.getFullYear(), today.getMonth(), 1)), end: toISO(today) }
+  if (period === 'quarter') {
+    const qm = Math.floor(today.getMonth() / 3) * 3
+    return { start: toISO(new Date(today.getFullYear(), qm, 1)), end: toISO(today) }
+  }
+  if (period === 'year') return { start: toISO(new Date(today.getFullYear(), 0, 1)), end: toISO(today) }
+  return { start: null, end: null } // 'all'
+}
+
+const PERIOD_LABELS = [
+  { key: 'month',   label: 'This Month' },
+  { key: 'quarter', label: 'Quarter' },
+  { key: 'year',    label: 'Year' },
+  { key: 'all',     label: 'All Time' },
+]
+
+
 // ── Full ledger for one customer ────────────────────────────────
 function DuesCard({ due, phone, language, onContactSaved }) {
   const [expanded,  setExpanded]  = useState(false)
@@ -157,9 +178,10 @@ function DuesCard({ due, phone, language, onContactSaved }) {
 }
 
 
-// ── Staff card ────────────────────────────────────────────────
+// ── Staff card (updated for net total) ──────────────────────
 function StaffCard({ member, language }) {
   const [expanded, setExpanded] = useState(false)
+  const isNeg = member.net_total < 0
 
   return (
     <div className="staff-card">
@@ -167,12 +189,16 @@ function StaffCard({ member, language }) {
         <div className="staff-card-left">
           <div className="staff-name">👷 {member.name}</div>
           <div className="staff-meta">
-            {t('this_month', language)}: <strong>{fmtRs(member.total_this_month)}</strong>
+            {(member.recent_payments || []).length} transaction{(member.recent_payments || []).length !== 1 ? 's' : ''} in period
           </div>
         </div>
         <div className="staff-right">
-          <div className="staff-total">{fmtRs(member.total_all_time)}</div>
-          <div className="staff-sublabel">{t('total_paid', language)}</div>
+          <div className="staff-total" style={{ color: isNeg ? '#2E7D32' : '#E65100' }}>
+            {isNeg ? '+' : ''}{fmtRs(Math.abs(member.net_total))}
+          </div>
+          <div className="staff-sublabel" style={{ color: isNeg ? '#4CAF50' : '#999' }}>
+            {isNeg ? 'received more' : 'net paid'}
+          </div>
           <span className="expand-icon">{expanded ? '▲' : '▼'}</span>
         </div>
       </div>
@@ -181,14 +207,19 @@ function StaffCard({ member, language }) {
         <div className="staff-expanded">
           {member.recent_payments && member.recent_payments.length > 0 ? (
             <div className="staff-section">
-              <div className="staff-section-title">{t('payments_label', language)}</div>
-              {member.recent_payments.map((p, i) => (
-                <div key={i} className="staff-payment-row">
-                  <span className="staff-pay-date">{p.date}</span>
-                  <span className="staff-pay-desc">{p.description || t('salary_label', language)}</span>
-                  <span className="staff-pay-amt">{fmtRs(p.amount)}</span>
-                </div>
-              ))}
+              <div className="staff-section-title">Recent Transactions</div>
+              {member.recent_payments.map((p, i) => {
+                const isReceipt = p.type === 'receipt'
+                return (
+                  <div key={i} className="staff-payment-row">
+                    <span className="staff-pay-date">{p.date}</span>
+                    <span className="staff-pay-desc">{p.description || (isReceipt ? 'Received' : 'Payment')}</span>
+                    <span className="staff-pay-amt" style={{ color: isReceipt ? '#2E7D32' : '#E65100' }}>
+                      {isReceipt ? '+' : '−'}{fmtRs(p.amount)}
+                    </span>
+                  </div>
+                )
+              })}
             </div>
           ) : (
             <p className="staff-empty">{t('no_payments', language)}</p>
@@ -203,6 +234,7 @@ function StaffCard({ member, language }) {
 // ── Main DuesPage ────────────────────────────────────────────────
 export default function DuesPage({ phone, storeName, language = 'hinglish' }) {
   const [tab,     setTab]     = useState('dues')
+  const [period,  setPeriod]  = useState('all')
   const [dues,    setDues]    = useState([])
   const [staff,   setStaff]   = useState([])
   const [loading, setLoading] = useState(false)
@@ -217,7 +249,8 @@ export default function DuesPage({ phone, storeName, language = 'hinglish' }) {
           const res = await fetchDues(phone)
           setDues(res.dues || [])
         } else {
-          const res = await fetchStaff(phone)
+          const { start, end } = getRange(period)
+          const res = await fetchStaff(phone, start, end)
           setStaff(res.staff || [])
         }
       } catch (e) {
@@ -227,7 +260,7 @@ export default function DuesPage({ phone, storeName, language = 'hinglish' }) {
       }
     }
     load()
-  }, [phone, tab])
+  }, [phone, tab, period])
 
   async function handleContactSaved(personName, contactPhone) {
     await updateDuesContact(phone, personName, contactPhone)
@@ -236,6 +269,8 @@ export default function DuesPage({ phone, storeName, language = 'hinglish' }) {
   }
 
   const totalDues = dues.reduce((s, d) => s + (d.balance || 0), 0)
+  const totalStaffExpense = staff.reduce((s, m) => s + (m.net_total > 0 ? m.net_total : 0), 0)
+  const totalStaffReceived = staff.reduce((s, m) => s + (m.net_total < 0 ? Math.abs(m.net_total) : 0), 0)
 
   return (
     <div className="dues-page">
@@ -245,6 +280,24 @@ export default function DuesPage({ phone, storeName, language = 'hinglish' }) {
           <div className="header-name">{storeName || 'Dues & Staff'}</div>
           <div className="header-status">{t('dues_status', language)}</div>
         </div>
+      </div>
+
+      {/* ── Period selector ── */}
+      <div style={{
+        display: 'flex', gap: 6, padding: '8px 12px', background: '#f5f5f5',
+        borderBottom: '1px solid #e0e0e0', overflowX: 'auto', flexShrink: 0,
+      }}>
+        {PERIOD_LABELS.map(p => (
+          <button key={p.key} onClick={() => setPeriod(p.key)} style={{
+            padding: '5px 12px', borderRadius: 16, border: 'none', fontSize: 12, fontWeight: 600,
+            background: period === p.key ? '#00695C' : '#fff',
+            color: period === p.key ? '#fff' : '#555',
+            boxShadow: period === p.key ? '0 2px 6px rgba(0,105,92,0.3)' : '0 1px 3px rgba(0,0,0,0.08)',
+            cursor: 'pointer', whiteSpace: 'nowrap',
+          }}>
+            {p.label}
+          </button>
+        ))}
       </div>
 
       <div className="dues-tabs">
@@ -283,7 +336,27 @@ export default function DuesPage({ phone, storeName, language = 'hinglish' }) {
             {staff.length === 0 ? (
               <div className="dues-empty">{t('no_staff', language)}</div>
             ) : (
-              staff.map(s => <StaffCard key={s.name} member={s} language={language} />)
+              <>
+                {/* Staff totals banner */}
+                <div style={{
+                  display: 'flex', justifyContent: 'space-between', padding: '10px 14px',
+                  background: '#FFF3E0', borderRadius: 10, margin: '8px 0 12px', fontSize: 13,
+                }}>
+                  <div>
+                    <div style={{ color: '#999', fontSize: 10, fontWeight: 600 }}>PAID</div>
+                    <div style={{ fontWeight: 700, color: '#E65100' }}>{fmtRs(totalStaffExpense)}</div>
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ color: '#999', fontSize: 10, fontWeight: 600 }}>RECEIVED</div>
+                    <div style={{ fontWeight: 700, color: '#2E7D32' }}>{fmtRs(totalStaffReceived)}</div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ color: '#999', fontSize: 10, fontWeight: 600 }}>NET</div>
+                    <div style={{ fontWeight: 700, color: '#1a1a1a' }}>{fmtRs(totalStaffExpense - totalStaffReceived)}</div>
+                  </div>
+                </div>
+                {staff.map(s => <StaffCard key={s.name} member={s} language={language} />)}
+              </>
             )}
           </>
         )}
