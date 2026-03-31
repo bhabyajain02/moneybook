@@ -91,25 +91,95 @@ function _browserSpeak(inRows, outRows, dateStr, language) {
 export default function LedgerEntry({ phone, language, onClose, onClassified, prefill }) {
   const isPrefill = !!prefill
 
-  function initRows() {
-    if (isPrefill) return txnsToRows(prefill.txns, prefill.display || null)
+  function initAllRows() {
+    if (!isPrefill) {
+      return {
+        inRows:  Array.from({ length: 5 }, EMPTY_ROW),
+        outRows: Array.from({ length: 5 }, EMPTY_ROW),
+        duesIn: [EMPTY_DUES_ROW()], duesOut: [EMPTY_DUES_ROW()],
+        staffIn: [EMPTY_PERSON_ROW()], staffOut: [EMPTY_PERSON_ROW()],
+        othersIn: [EMPTY_PERSON_ROW()], othersOut: [EMPTY_PERSON_ROW()],
+      }
+    }
+
+    // Distribute classified transactions into sub-sections
+    const general = { inRows: [], outRows: [] }
+    const dues = { in: [], out: [] }
+    const staff = { in: [], out: [] }
+    const others = { in: [], out: [] }
+
+    const txns = prefill.txns || []
+    const display = prefill.display || null
+
+    // Use txnsToRows logic for column assignment (left/right from display)
+    const leftSet  = new Set()
+    const rightSet = new Set()
+    if (display?.layout === 'two_column' && display?.rows?.length > 0) {
+      display.rows.forEach(row => {
+        const indices = Array.isArray(row.txn_indices) ? row.txn_indices
+                      : row.txn_index != null ? [row.txn_index] : []
+        const cells = row.cells || []
+        const leftEmpty  = !cells[0]?.trim()
+        const rightEmpty = !cells[1]?.trim()
+        if (indices[0] != null) {
+          if (leftEmpty && !rightEmpty) rightSet.add(indices[0])
+          else leftSet.add(indices[0])
+        }
+        if (indices[1] != null) {
+          if (rightEmpty && !leftEmpty) leftSet.add(indices[1])
+          else rightSet.add(indices[1])
+        }
+      })
+    }
+
+    txns.forEach((t, i) => {
+      const isIn = leftSet.has(i) ? true
+                 : rightSet.has(i) ? false
+                 : IN_TYPES.has(t.type)
+      const side = isIn ? 'in' : 'out'
+      const cat = t.person_category
+
+      if (cat === 'staff') {
+        staff[side].push({ name: t.person_name || '', amount: String(t.amount || ''), _txn: t })
+      } else if (cat === 'customer' || t.type === 'udhaar_received' || t.type === 'udhaar_given') {
+        dues[side].push({ desc: t.description || '', billNo: t.bill_number || '', amount: String(t.amount || ''), _txn: t })
+      } else if (cat === 'supplier') {
+        others[side].push({ name: t.person_name || '', amount: String(t.amount || ''), _txn: t })
+      } else {
+        // General row
+        const row = { particulars: t.description || '', amount: String(t.amount || ''), _txn: t }
+        if (isIn) general.inRows.push(row)
+        else general.outRows.push(row)
+      }
+    })
+
+    // Ensure at least one empty row per section
+    const ensure = (arr, factory) => arr.length > 0 ? arr : [factory()]
+
     return {
-      inRows:  Array.from({ length: 5 }, EMPTY_ROW),
-      outRows: Array.from({ length: 5 }, EMPTY_ROW),
+      inRows: ensure(general.inRows, EMPTY_ROW),
+      outRows: ensure(general.outRows, EMPTY_ROW),
+      duesIn: ensure(dues.in, EMPTY_DUES_ROW),
+      duesOut: ensure(dues.out, EMPTY_DUES_ROW),
+      staffIn: ensure(staff.in, EMPTY_PERSON_ROW),
+      staffOut: ensure(staff.out, EMPTY_PERSON_ROW),
+      othersIn: ensure(others.in, EMPTY_PERSON_ROW),
+      othersOut: ensure(others.out, EMPTY_PERSON_ROW),
     }
   }
 
   const today = new Date().toISOString().slice(0, 10)
+  const [_init] = useState(() => initAllRows())
   const [date, setDate]               = useState(isPrefill ? (prefill.date || today) : today)
-  const [inRows, setInRows]           = useState(() => initRows().inRows)
-  const [outRows, setOutRows]         = useState(() => initRows().outRows)
+  const [inRows, setInRows]           = useState(_init.inRows)
+  const [outRows, setOutRows]         = useState(_init.outRows)
   // ── Sub-section rows ────────────────────────────────────────
-  const [duesInRows,    setDuesInRows]    = useState([EMPTY_DUES_ROW()])
-  const [duesOutRows,   setDuesOutRows]   = useState([EMPTY_DUES_ROW()])
-  const [staffInRows,   setStaffInRows]   = useState([EMPTY_PERSON_ROW()])
-  const [staffOutRows,  setStaffOutRows]  = useState([EMPTY_PERSON_ROW()])
-  const [othersInRows,  setOthersInRows]  = useState([EMPTY_PERSON_ROW()])
-  const [othersOutRows, setOthersOutRows] = useState([EMPTY_PERSON_ROW()])
+  const [duesInRows,    setDuesInRows]    = useState(_init.duesIn)
+  const [duesOutRows,   setDuesOutRows]   = useState(_init.duesOut)
+  const [staffInRows,   setStaffInRows]   = useState(_init.staffIn)
+  const [staffOutRows,  setStaffOutRows]  = useState(_init.staffOut)
+  const [othersInRows,  setOthersInRows]  = useState(_init.othersIn)
+  const [othersOutRows, setOthersOutRows] = useState(_init.othersOut)
   const [staffOptions,  setStaffOptions]  = useState([])
   const [othersOptions, setOthersOptions] = useState([])
 
@@ -191,25 +261,40 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
   }, [hasEntries, isPrefill])
 
   // ── Core speak function: Google TTS → browser fallback ─────
-  // dateFromPhoto: true = date was read from the notebook image
-  //                false = date was not found, defaulted to today → stronger warning
-  async function _speak(ir, or, dateFromPhoto = true) {
+  // Collects ALL sections (General → Dues → Staff → Others) in visual order
+  async function _speak(dateFromPhoto = true) {
     if (audioMuted) return
     if (audioRef.current) { audioRef.current.pause(); audioRef.current = null }
     window.speechSynthesis?.cancel()
     setSpeakingIdx(null)
 
-    // Build entries and store TTS-index → row-index mapping
-    const inMap  = []  // inMap[ttsIdx] = actual index in ir
-    const outMap = []
-    const inE  = []
-    const outE = []
-    ir.forEach((r, i) => {
-      if (r.particulars.trim() && r.amount) { inMap.push(i); inE.push({ desc: r.particulars, amount: r.amount }) }
-    })
-    or.forEach((r, i) => {
-      if (r.particulars.trim() && r.amount) { outMap.push(i); outE.push({ desc: r.particulars, amount: r.amount }) }
-    })
+    // Helper: collect valid rows from a section, return { entries, map }
+    function collect(rows, section, descKey = 'particulars') {
+      const entries = [], map = []
+      rows.forEach((r, i) => {
+        const desc = (r[descKey] || r.name || r.desc || '').trim()
+        const amt = r.amount
+        if (desc && amt) { entries.push({ desc, amount: amt }); map.push({ section, rowIdx: i }) }
+      })
+      return { entries, map }
+    }
+
+    // Build composite arrays in visual order: General → Dues → Staff → Others
+    const gIn = collect(inRows, 'general')
+    const dIn = collect(duesInRows, 'dues', 'desc')
+    const sIn = collect(staffInRows, 'staff', 'name')
+    const oIn = collect(othersInRows, 'others', 'name')
+
+    const gOut = collect(outRows, 'general')
+    const dOut = collect(duesOutRows, 'dues', 'desc')
+    const sOut = collect(staffOutRows, 'staff', 'name')
+    const oOut = collect(othersOutRows, 'others', 'name')
+
+    const inE  = [...gIn.entries, ...dIn.entries, ...sIn.entries, ...oIn.entries]
+    const outE = [...gOut.entries, ...dOut.entries, ...sOut.entries, ...oOut.entries]
+    const inMap  = [...gIn.map, ...dIn.map, ...sIn.map, ...oIn.map]
+    const outMap = [...gOut.map, ...dOut.map, ...sOut.map, ...oOut.map]
+
     if (inE.length + outE.length === 0) return
     ttsIdxMapRef.current = { in: inMap, out: outMap }
 
@@ -234,8 +319,8 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
           } else if (active) {
             setSpeakingDate(false)
             const [side, idxStr] = active.split('_')
-            const rowIdx = ttsIdxMapRef.current[side]?.[parseInt(idxStr)] ?? null
-            setSpeakingIdx(rowIdx != null ? { side, rowIdx } : null)
+            const mapped = ttsIdxMapRef.current[side]?.[parseInt(idxStr)]
+            setSpeakingIdx(mapped || null)
           }
         })
       }
@@ -244,7 +329,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
       audio_el.onerror = () => { setSpeaking(false); setSpeakingIdx(null); setSpeakingDate(false) }
       await audio_el.play()
     } catch {
-      _browserSpeak(ir, or, dateStr, language || 'hinglish')
+      _browserSpeak(inRows, outRows, dateStr, language || 'hinglish')
       const check = setInterval(() => {
         if (!window.speechSynthesis?.speaking) { setSpeaking(false); clearInterval(check) }
       }, 300)
@@ -263,10 +348,8 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
   useEffect(() => {
     if (!isPrefill) return
     const t = setTimeout(() => {
-      const { inRows: ir, outRows: or } = txnsToRows(prefill.txns, prefill.display || null)
-      // dateFromPhoto: true only if the backend actually found a date in the image
       const dateFromPhoto = !!(prefill.date)
-      _speak(ir, or, dateFromPhoto)
+      _speak(dateFromPhoto)
     }, 700)
     return () => {
       clearTimeout(t)
@@ -276,7 +359,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  function handleSpeak() { _speak(inRows, outRows) }
+  function handleSpeak() { _speak() }
 
   function updateRow(side, idx, field, val) {
     const setter = side === 'in' ? setInRows : setOutRows
@@ -303,6 +386,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
     othersIn:  setOthersInRows, othersOut:  setOthersOutRows,
   }
   function updateSectionRow(section, idx, field, val) {
+    if (field === 'name' && val === '➕ Add new') val = ''
     SECTION_SETTERS[section](prev => prev.map((r, i) => i === idx ? { ...r, [field]: val } : r))
   }
   function addSectionRow(section, emptyFn) {
@@ -342,14 +426,14 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
       const duesBillDesc = (r, suffix) =>
         [r.desc, r.billNo ? `Bill#${r.billNo}` : ''].filter(Boolean).join(' ') || suffix
       const rows = [
-        ...validIn      .map(r => ({ particulars: r.particulars,                  amount: r.amount, column: 'in'  })),
-        ...validOut     .map(r => ({ particulars: r.particulars,                  amount: r.amount, column: 'out' })),
-        ...validDuesIn  .map(r => ({ particulars: duesBillDesc(r,'Dues received'), amount: r.amount, column: 'in'  })),
-        ...validDuesOut .map(r => ({ particulars: duesBillDesc(r,'Dues given'),    amount: r.amount, column: 'out' })),
-        ...validStaffIn  .map(r => ({ particulars: r.name || 'Staff',             amount: r.amount, column: 'in'  })),
-        ...validStaffOut .map(r => ({ particulars: r.name || 'Staff expense',     amount: r.amount, column: 'out' })),
-        ...validOthersIn .map(r => ({ particulars: r.name || 'Others',            amount: r.amount, column: 'in'  })),
-        ...validOthersOut.map(r => ({ particulars: r.name || 'Others',            amount: r.amount, column: 'out' })),
+        ...validIn      .map(r => ({ particulars: r.particulars,                  amount: r.amount, column: 'in',  section: 'general' })),
+        ...validOut     .map(r => ({ particulars: r.particulars,                  amount: r.amount, column: 'out', section: 'general' })),
+        ...validDuesIn  .map(r => ({ particulars: duesBillDesc(r,'Dues received'), amount: r.amount, column: 'in',  section: 'dues' })),
+        ...validDuesOut .map(r => ({ particulars: duesBillDesc(r,'Dues given'),    amount: r.amount, column: 'out', section: 'dues' })),
+        ...validStaffIn  .map(r => ({ particulars: r.name || 'Staff',             amount: r.amount, column: 'in',  section: 'staff', person_name: r.name })),
+        ...validStaffOut .map(r => ({ particulars: r.name || 'Staff expense',     amount: r.amount, column: 'out', section: 'staff', person_name: r.name })),
+        ...validOthersIn .map(r => ({ particulars: r.name || 'Others',            amount: r.amount, column: 'in',  section: 'others', person_name: r.name })),
+        ...validOthersOut.map(r => ({ particulars: r.name || 'Others',            amount: r.amount, column: 'out', section: 'others', person_name: r.name })),
       ]
       setLoading(true)
       try {
@@ -440,8 +524,8 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
           {/* Data rows */}
           <div className="ledger-rows-body">
             {Array.from({ length: maxRows }).map((_, i) => {
-              const isActiveIn  = speakingIdx?.side === 'in'  && speakingIdx.rowIdx === i && i < inRows.length
-              const isActiveOut = speakingIdx?.side === 'out' && speakingIdx.rowIdx === i && i < outRows.length
+              const isActiveIn  = speakingIdx?.side === 'in'  && speakingIdx.section === 'general' && speakingIdx.rowIdx === i && i < inRows.length
+              const isActiveOut = speakingIdx?.side === 'out' && speakingIdx.section === 'general' && speakingIdx.rowIdx === i && i < outRows.length
               return (
               <div key={i} className="ledger-data-row">
                 <div className={`ledger-entry-cell${isActiveIn ? ' ledger-cell--speaking' : ''}`}>
@@ -511,9 +595,12 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             <div className="ledger-center-divider" />
             <div className="ledger-section-label">📤 Dues Given</div>
           </div>
-          {Array.from({ length: Math.max(duesInRows.length, duesOutRows.length) }).map((_, i) => (
+          {Array.from({ length: Math.max(duesInRows.length, duesOutRows.length) }).map((_, i) => {
+            const duesActiveIn  = speakingIdx?.side === 'in'  && speakingIdx.section === 'dues' && speakingIdx.rowIdx === i
+            const duesActiveOut = speakingIdx?.side === 'out' && speakingIdx.section === 'dues' && speakingIdx.rowIdx === i
+            return (
             <div key={`dues-${i}`} className="ledger-data-row">
-              <div className="ledger-entry-cell ledger-dues-cell">
+              <div className={`ledger-entry-cell ledger-dues-cell${duesActiveIn ? ' ledger-cell--speaking' : ''}`}>
                 {i < duesInRows.length ? (
                   <>
                     <input className="ledger-input-desc ledger-input-desc--dues"
@@ -534,7 +621,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                 ) : <div className="ledger-cell-placeholder" />}
               </div>
               <div className="ledger-center-divider" />
-              <div className="ledger-entry-cell ledger-dues-cell">
+              <div className={`ledger-entry-cell ledger-dues-cell${duesActiveOut ? ' ledger-cell--speaking' : ''}`}>
                 {i < duesOutRows.length ? (
                   <>
                     <input className="ledger-input-desc ledger-input-desc--dues"
@@ -555,7 +642,8 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                 ) : <div className="ledger-cell-placeholder" />}
               </div>
             </div>
-          ))}
+            )
+          })}
           <div className="ledger-add-row">
             <button className="ledger-add-btn" onClick={() => addSectionRow('duesIn', EMPTY_DUES_ROW)}>+ Dues row</button>
             <div className="ledger-center-divider" />
@@ -568,9 +656,12 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             <div className="ledger-center-divider" />
             <div className="ledger-section-label">👷 Staff Expense</div>
           </div>
-          {Array.from({ length: Math.max(staffInRows.length, staffOutRows.length) }).map((_, i) => (
+          {Array.from({ length: Math.max(staffInRows.length, staffOutRows.length) }).map((_, i) => {
+            const staffActiveIn  = speakingIdx?.side === 'in'  && speakingIdx.section === 'staff' && speakingIdx.rowIdx === i
+            const staffActiveOut = speakingIdx?.side === 'out' && speakingIdx.section === 'staff' && speakingIdx.rowIdx === i
+            return (
             <div key={`staff-${i}`} className="ledger-data-row">
-              <div className="ledger-entry-cell">
+              <div className={`ledger-entry-cell${staffActiveIn ? ' ledger-cell--speaking' : ''}`}>
                 {i < staffInRows.length ? (
                   <>
                     <input className="ledger-input-name" list="staff-list"
@@ -586,7 +677,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                 ) : <div className="ledger-cell-placeholder" />}
               </div>
               <div className="ledger-center-divider" />
-              <div className="ledger-entry-cell">
+              <div className={`ledger-entry-cell${staffActiveOut ? ' ledger-cell--speaking' : ''}`}>
                 {i < staffOutRows.length ? (
                   <>
                     <input className="ledger-input-name" list="staff-list"
@@ -602,8 +693,10 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                 ) : <div className="ledger-cell-placeholder" />}
               </div>
             </div>
-          ))}
+            )
+          })}
           <datalist id="staff-list">
+            <option value="➕ Add new" />
             {staffOptions.map(n => <option key={n} value={n} />)}
           </datalist>
           <div className="ledger-add-row">
@@ -618,9 +711,12 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             <div className="ledger-center-divider" />
             <div className="ledger-section-label">🔖 Others (Out)</div>
           </div>
-          {Array.from({ length: Math.max(othersInRows.length, othersOutRows.length) }).map((_, i) => (
+          {Array.from({ length: Math.max(othersInRows.length, othersOutRows.length) }).map((_, i) => {
+            const othActiveIn  = speakingIdx?.side === 'in'  && speakingIdx.section === 'others' && speakingIdx.rowIdx === i
+            const othActiveOut = speakingIdx?.side === 'out' && speakingIdx.section === 'others' && speakingIdx.rowIdx === i
+            return (
             <div key={`others-${i}`} className="ledger-data-row">
-              <div className="ledger-entry-cell">
+              <div className={`ledger-entry-cell${othActiveIn ? ' ledger-cell--speaking' : ''}`}>
                 {i < othersInRows.length ? (
                   <>
                     <input className="ledger-input-name" list="others-list"
@@ -636,7 +732,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                 ) : <div className="ledger-cell-placeholder" />}
               </div>
               <div className="ledger-center-divider" />
-              <div className="ledger-entry-cell">
+              <div className={`ledger-entry-cell${othActiveOut ? ' ledger-cell--speaking' : ''}`}>
                 {i < othersOutRows.length ? (
                   <>
                     <input className="ledger-input-name" list="others-list"
@@ -652,8 +748,10 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                 ) : <div className="ledger-cell-placeholder" />}
               </div>
             </div>
-          ))}
+            )
+          })}
           <datalist id="others-list">
+            <option value="➕ Add new" />
             {othersOptions.map(n => <option key={n} value={n} />)}
           </datalist>
           <div className="ledger-add-row">

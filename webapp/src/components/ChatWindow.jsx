@@ -4,7 +4,8 @@ import TypingIndicator from './TypingIndicator.jsx'
 import QuickReplies from './QuickReplies.jsx'
 import InputBar from './InputBar.jsx'
 import LedgerEntry from './LedgerEntry.jsx'
-import { sendMessage, sendImage, pollMessages, confirmTransactions, dismissMessage } from '../api.js'
+import PersonClassifyWidget from './PersonClassifyWidget.jsx'
+import { sendMessage, sendImage, pollMessages, confirmTransactions, dismissMessage, fetchStaff, classifyPersonsBatch } from '../api.js'
 
 const LANGUAGES = [
   { key: 'english',  label: 'English' },
@@ -61,6 +62,8 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
   const [langOpen, setLangOpen]           = useState(false)
   const [showLedger, setShowLedger]       = useState(false)
   const [photoReview, setPhotoReview]     = useState(null)  // { msgId, txns, date }
+  const [classifyWidget, setClassifyWidget] = useState(null) // { persons, txns, msgId, date, display }
+  const [staffOptions, setStaffOptions]   = useState([])
   const pendingPhotoRef = useRef(null)    // bridge from inside setMessages → outside
   const lastIdRef       = useRef(0)
   const bottomRef       = useRef()
@@ -70,6 +73,14 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
   // Captured once on first arrival — never overwritten by edits — so we can
   // diff original vs corrected when the user hits Save.
   const originalTxnsRef = useRef({})
+
+  // Fetch staff names for classification widget
+  useEffect(() => {
+    if (!phone) return
+    fetchStaff(phone)
+      .then(data => setStaffOptions((data || []).map(s => s.name || s).filter(Boolean)))
+      .catch(() => {})
+  }, [phone])
 
   // Close language dropdown on outside click
   useEffect(() => {
@@ -122,10 +133,28 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
           return [...prev, ...processed]
         })
 
-        // Open photo review modal outside setMessages
+        // Open photo review modal — or classification widget first if persons need classifying
         if (pendingPhotoRef.current) {
-          setPhotoReview(pendingPhotoRef.current)
+          const pending = pendingPhotoRef.current
           pendingPhotoRef.current = null
+
+          // Extract unique person names that need classification
+          const personNames = [...new Set(
+            (pending.txns || [])
+              .filter(t => t.person_name && t.needs_tracking !== false)
+              .map(t => t.person_name)
+          )]
+
+          if (personNames.length > 0) {
+            // Build person info for the widget
+            const persons = personNames.map(name => {
+              const txn = pending.txns.find(t => t.person_name === name)
+              return { name, description: txn?.description || '', amount: txn?.amount || 0 }
+            })
+            setClassifyWidget({ persons, txns: pending.txns, msgId: pending.msgId, date: pending.date, display: pending.display })
+          } else {
+            setPhotoReview(pending)
+          }
         }
 
         // Update quick replies from latest bot message
@@ -249,7 +278,27 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
   // ── Ledger classify callback ───────────────────────────────────
   async function handleLedgerClassified(result) {
     if (result.message_id) {
-      lastIdRef.current = Math.max(lastIdRef.current, result.message_id - 1)
+      // Skip PAST this message so poll doesn't render it as a ConfirmCard
+      lastIdRef.current = Math.max(lastIdRef.current, result.message_id)
+    }
+    // Auto-confirm manual ledger entries — skip the ConfirmCard in chat
+    const txns = result.pending_transactions || []
+    if (txns.length > 0 && result.message_id) {
+      try {
+        await confirmTransactions(phone, txns, result.message_id)
+        // Add a success message to chat
+        setMessages(prev => [...prev, {
+          id: Date.now(), direction: 'bot',
+          body: `✅ ${txns.length} entries saved from ledger.`,
+          created_at: new Date().toISOString(),
+        }])
+      } catch (e) {
+        setMessages(prev => [...prev, {
+          id: Date.now(), direction: 'bot',
+          body: `⚠️ Save failed: ${e.message}`,
+          created_at: new Date().toISOString(),
+        }])
+      }
     }
     await poll()
   }
@@ -287,6 +336,51 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
       delete originalTxnsRef.current[photoReview.msgId]
     }
     setPhotoReview(null)
+  }
+
+  async function handleClassifyComplete(classifications) {
+    if (!classifyWidget) return
+    const { txns, msgId, date, display } = classifyWidget
+
+    // Save classifications to backend
+    const items = Object.entries(classifications).map(([name, c]) => ({
+      name: c.staffName || name,
+      category: c.category,
+    }))
+    try {
+      await classifyPersonsBatch(phone, items)
+    } catch (e) {
+      console.error('Classify batch failed:', e)
+    }
+
+    // Annotate transactions with their category and remap staff names
+    const annotated = txns.map(t => {
+      if (!t.person_name) return t
+      const c = classifications[t.person_name]
+      if (!c) return t
+      return {
+        ...t,
+        person_category: c.category,
+        person_name: c.category === 'staff' && c.staffName ? c.staffName : t.person_name,
+        needs_tracking: false,
+      }
+    })
+
+    // Refresh staff options after classification
+    fetchStaff(phone)
+      .then(data => setStaffOptions((data || []).map(s => s.name || s).filter(Boolean)))
+      .catch(() => {})
+
+    setClassifyWidget(null)
+    setPhotoReview({ msgId, txns: annotated, date, display })
+  }
+
+  function handleClassifyCancel() {
+    if (classifyWidget?.msgId) {
+      dismissMessage(phone, classifyWidget.msgId).catch(() => {})
+      delete originalTxnsRef.current[classifyWidget.msgId]
+    }
+    setClassifyWidget(null)
   }
 
   async function handleCancelConfirm(botMsgId) {
@@ -413,6 +507,16 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
           language={language}
           onClose={() => setShowLedger(false)}
           onClassified={handleLedgerClassified}
+        />
+      )}
+
+      {/* ── Person classification widget (before photo review) ── */}
+      {classifyWidget && (
+        <PersonClassifyWidget
+          persons={classifyWidget.persons}
+          staffOptions={staffOptions}
+          onComplete={handleClassifyComplete}
+          onCancel={handleClassifyCancel}
         />
       )}
 

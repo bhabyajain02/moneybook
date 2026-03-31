@@ -134,6 +134,16 @@ export async function classifyLedger(phone, date, rows, language = 'hinglish') {
   // returns { message_id, pending_transactions, response_message }
 }
 
+export async function classifyPersonsBatch(phone, classifications) {
+  const r = await fetch(`${BASE}/classify-persons`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone, classifications }),
+  })
+  if (!r.ok) throw new Error('Classification failed')
+  return r.json()
+}
+
 export async function dismissMessage(phone, botMessageId) {
   const r = await fetch(`${BASE}/dismiss?phone=${encodeURIComponent(phone)}&bot_message_id=${botMessageId}`, {
     method: 'POST',

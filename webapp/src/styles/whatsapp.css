@@ -1974,7 +1974,7 @@ html, body, #root {
   flex: 1;
   display: flex;
   flex-direction: row;
-  align-items: flex-start;
+  align-items: center;
   padding: 3px 4px;
   gap: 0;
   min-width: 0;
@@ -2461,30 +2461,40 @@ html, body, #root {
   letter-spacing: 0.4px;
   text-transform: uppercase;
 }
+/* Sub-section data rows: solid background to hide ruled lines */
+.ledger-section-divider ~ .ledger-data-row,
+.ledger-section-divider ~ .ledger-add-row {
+  background: #fef9f0;
+}
+.ledger-section-divider ~ .ledger-data-row:nth-child(even) {
+  background: #faf3e6;
+}
 
 /* ── Dues cell layout: desc + bill# + amt ── */
 .ledger-dues-cell {
-  gap: 3px;
+  align-items: center;
+  gap: 0;
 }
 .ledger-input-desc--dues {
   min-width: 0;
   flex: 1;
 }
 .ledger-input-billno {
-  width: 48px;
+  width: 44px;
   flex-shrink: 0;
-  padding: 3px 4px;
+  padding: 2px 4px;
   border: none;
-  border-left: 1px solid #d4c090;
-  background: transparent;
-  font-size: 11px;
-  color: #44200a;
+  border-radius: 4px;
+  background: rgba(180, 140, 60, 0.13);
+  font-size: 10px;
+  color: #7a5010;
   font-family: 'SF Mono', 'Fira Mono', monospace;
   text-align: center;
   outline: none;
+  margin: 0 3px;
 }
-.ledger-input-billno::placeholder { color: #bba080; font-size: 10px; }
-.ledger-input-billno:focus { background: rgba(255,255,255,0.7); border-radius: 3px; }
+.ledger-input-billno::placeholder { color: #c0a060; font-size: 9px; }
+.ledger-input-billno:focus { background: rgba(255, 255, 255, 0.85); border-radius: 4px; }
 
 /* ── Name/person combobox input ── */
 .ledger-input-name {
@@ -2500,3 +2510,119 @@ html, body, #root {
 }
 .ledger-input-name::placeholder { color: #bba080; font-size: 10px; }
 .ledger-input-name:focus { background: rgba(255,255,255,0.7); border-radius: 3px; }
+
+/* ═══════════════════════════════════════════════════════════════
+   PERSON CLASSIFY WIDGET
+   ═══════════════════════════════════════════════════════════════ */
+.classify-widget-panel { max-height: 85vh; }
+.classify-widget-body {
+  padding: 12px 16px;
+  overflow-y: auto;
+  flex: 1;
+}
+.classify-widget-hint {
+  font-size: 13px;
+  color: #667781;
+  margin-bottom: 12px;
+}
+.classify-person-card {
+  background: #f8f9fa;
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 10px;
+  border: 1px solid #e9edef;
+}
+.classify-person-name {
+  font-weight: 600;
+  font-size: 15px;
+  color: #111b21;
+}
+.classify-person-context {
+  font-size: 12px;
+  color: #667781;
+  margin: 4px 0 10px;
+}
+.classify-btn-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.classify-cat-btn {
+  flex: 1;
+  min-width: 68px;
+  padding: 8px 4px;
+  border-radius: 8px;
+  border: 1.5px solid #ddd;
+  background: #fff;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: center;
+}
+.classify-cat-btn:active { transform: scale(0.96); }
+.classify-cat-btn.active {
+  border-color: #128C7E;
+  background: #E7F5F3;
+  font-weight: 600;
+  color: #075E54;
+}
+.classify-staff-select {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1.5px solid #128C7E;
+  font-size: 13px;
+  background: #fff;
+  color: #111b21;
+  outline: none;
+}
+.classify-widget-actions {
+  padding: 12px 16px;
+  border-top: 1px solid #e9edef;
+}
+.classify-continue-btn {
+  width: 100%;
+  padding: 14px;
+  border: none;
+  border-radius: 12px;
+  background: #128C7E;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.classify-continue-btn:disabled {
+  background: #b0b0b0;
+  cursor: not-allowed;
+}
+.classify-continue-btn:not(:disabled):active {
+  opacity: 0.85;
+}
+.classify-new-staff-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.classify-new-staff-input {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1.5px solid #128C7E;
+  font-size: 13px;
+  outline: none;
+  color: #111b21;
+}
+.classify-new-staff-input:focus {
+  border-color: #075E54;
+  box-shadow: 0 0 0 2px rgba(18,140,126,0.15);
+}
+.classify-back-select-btn {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1.5px solid #ddd;
+  background: #f8f9fa;
+  cursor: pointer;
+  font-size: 14px;
+}

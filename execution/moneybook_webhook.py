@@ -640,7 +640,6 @@ async def whatsapp_webhook(
         reply = (f"✅ Save: {t.get('description','')} — ₹{float(t['amount']):,.0f}\n"
                  f"   {emoji} _{label}_")
         if (t.get('person_name') and t.get('needs_tracking', False)
-                and t.get('tag') != 'cash_discount'
                 and not get_person(sid, t['person_name'])):
             set_bot_state(sid, {'state': 'classifying',
                                 'persons_queue': [t['person_name']], 'person_index': 0})
@@ -855,7 +854,6 @@ def _process_web_message(phone: str, body: str, language: str = 'hinglish') -> d
         label = TAG_META.get(tag, ((tag or 'other').replace('_',' ').title(), '📝'))[0]
         reply = f"✅ Save: {t.get('description','')} — ₹{float(t['amount']):,.0f}\n   {emoji} _{label}_"
         if (t.get('person_name') and t.get('needs_tracking', False)
-                and t.get('tag') != 'cash_discount'
                 and not get_person(sid, t['person_name'])):
             set_bot_state(sid, {'state': 'classifying',
                                 'persons_queue': [t['person_name']], 'person_index': 0})
@@ -1308,9 +1306,28 @@ async def api_ledger_classify(req: LedgerClassifyRequest):
         parsed = parse_text_message(message, store_context=ctx, language=language)
         txns   = parsed.get('transactions', [])
 
-        # Force date on all transactions
-        for t in txns:
+        # Force date on all transactions and auto-classify section-tagged rows
+        # Build ordered section list from request rows (same order as lines fed to parser)
+        ordered_sections = []
+        for r in in_rows:
+            ordered_sections.append(r)
+        for r in out_rows:
+            ordered_sections.append(r)
+
+        for i, t in enumerate(txns):
             t['date'] = today
+            # Match by index — rows were fed to parser in same order
+            src = ordered_sections[i] if i < len(ordered_sections) else {}
+            section = src.get('section', 'general')
+            person  = t.get('person_name') or src.get('person_name', '')
+            if section != 'general' and person:
+                cat = 'staff' if section == 'staff' else ('customer' if section == 'dues' else 'supplier')
+                save_person(store['id'], person, cat)
+                t['needs_tracking'] = False
+                t['person_category'] = cat
+            elif section != 'general':
+                # Even without person name, skip classification for sectioned rows
+                t['needs_tracking'] = False
 
         response_msg = parsed.get('response_message', f'{len(txns)} entries from ledger')
         msg_id = save_web_message(
@@ -1328,6 +1345,23 @@ async def api_ledger_classify(req: LedgerClassifyRequest):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class ClassifyPersonsRequest(BaseModel):
+    phone:           str
+    classifications: list   # [{ name: str, category: str }]
+
+@app.post('/api/classify-persons')
+async def api_classify_persons(req: ClassifyPersonsRequest):
+    """Batch-classify persons (staff/customer/supplier/home)."""
+    store = get_or_create_store(req.phone)
+    sid   = store['id']
+    for item in (req.classifications or []):
+        name = (item.get('name') or '').strip()
+        cat  = item.get('category', 'customer')
+        if name:
+            save_person(sid, name, cat)
+    return {'saved': len(req.classifications or [])}
 
 
 @app.post('/api/quick-parse')

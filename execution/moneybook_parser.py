@@ -157,9 +157,19 @@ Set person_name=null for anything that is NOT a real human name:
 If the word could appear in a dictionary as a common noun/verb/adjective — it is NOT a person_name.
 
 ━━ NEEDS_TRACKING ━━
-Set needs_tracking=true ONLY when person_name is a real human whose relationship
-should be tracked (customer who owes money, staff on payroll, supplier you pay regularly).
-Set needs_tracking=false for payment descriptors, method names, or transaction types.
+Set needs_tracking=true ONLY when person_name is a real human whose ongoing
+business relationship should be tracked (staff on payroll, customer who owes money,
+regular supplier).
+Set needs_tracking=false when:
+- person_name is a payment descriptor, method name, or transaction type
+- The transaction is a store operational expense where the person is just a recipient
+  (cash discount, refund, delivery charge, packaging cost, misc store expense)
+- The person received a one-time payment that doesn't indicate an ongoing relationship
+Key insight: "Cash discount given to X" means X is a customer getting a discount —
+the store knows X is a customer from context. No need to track/ask.
+"Bill payment to X" for goods/services is a routine expense — no tracking needed.
+Only set needs_tracking=true when knowing the person's category (staff/customer/supplier)
+would change how the transaction is recorded or reported.
 
 ━━ VERIFY YOUR WORK ━━
 If any total or balance figure is written on the page, check that your
@@ -273,12 +283,20 @@ Set person_name=null for anything that is NOT a real human name:
 If the word could appear in a dictionary as a common noun/verb/adjective — it is NOT a person_name.
 
 ━━ NEEDS_TRACKING ━━
-Set needs_tracking=true ONLY when person_name is a real human whose relationship
-should be tracked (customer who owes money, staff on payroll, supplier you pay regularly).
-Set needs_tracking=false when person_name is a payment descriptor, method name,
-transaction type, or any case where tracking their category adds no business value.
+Set needs_tracking=true ONLY when person_name is a real human whose ongoing
+business relationship should be tracked (staff on payroll, customer who owes money,
+regular supplier).
+Set needs_tracking=false when:
+- person_name is a payment descriptor, method name, or transaction type
+- The transaction is a store operational expense where the person is just a recipient
+  (cash discount, refund, delivery charge, packaging cost, misc store expense)
+- The person received a one-time payment that doesn't indicate an ongoing relationship
+Key insight: "Cash discount given to X" means X is a customer getting a discount —
+the store knows X is a customer from context. No need to track/ask.
+"Bill payment to X" for goods/services is a routine expense — no tracking needed.
+Only set needs_tracking=true when knowing the person's category (staff/customer/supplier)
+would change how the transaction is recorded or reported.
 For udhaar_given and udhaar_received: needs_tracking=true if person_name looks like a real name.
-For sale/expense with generic descriptors: needs_tracking=false.
 
 ━━ OUTPUT — ONLY valid JSON ━━
 {{
@@ -619,6 +637,10 @@ Answer NO if "{name}" is any of:
   - A payment method or channel (UPI, Online, Bank, Credit, Advance)
   - Part of the description that was mistakenly extracted as a name
   - Ambiguous enough that it could easily be a descriptor rather than a person
+  - A person receiving a routine store expense (cash discount, refund, return, delivery)
+    where their category (staff/customer/supplier) doesn't affect how the entry is recorded
+  - The description implies a standard business transaction (discount, bill payment,
+    refund, goods return) rather than an ongoing tracked relationship (salary, dues, credit)
 
 When in doubt, answer NO — it's better to skip than to ask about a non-person.
 
