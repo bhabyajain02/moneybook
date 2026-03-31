@@ -5,6 +5,7 @@ const CATEGORIES = [
   { key: 'customer', label: 'Customer', icon: '🛒' },
   { key: 'supplier', label: 'Supplier', icon: '📦' },
   { key: 'home',     label: 'Home',     icon: '🏠' },
+  { key: 'other',    label: 'Other',    icon: '📋' },
 ]
 
 export default function PersonClassifyWidget({ persons, staffOptions: initialStaffOptions, onComplete, onCancel }) {

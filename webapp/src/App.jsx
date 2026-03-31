@@ -3,6 +3,8 @@ import LoginScreen from './components/LoginScreen.jsx'
 import ChatWindow from './components/ChatWindow.jsx'
 import AnalyticsPage from './components/AnalyticsPage.jsx'
 import DuesPage from './components/DuesPage.jsx'
+import ProfilePage from './components/ProfilePage.jsx'
+import { updateProfile } from './api.js'
 
 const LS_KEY  = 'moneybook_phone'
 const LS_NAME = 'moneybook_store_name'
@@ -21,6 +23,8 @@ export default function App() {
     if (lang) {
       localStorage.setItem(LS_LANG, lang)
       setLanguage(lang)
+      // Persist selected language to the backend store record
+      updateProfile(normalized, { language: lang }).catch(() => {})
     }
     setPhone(normalized)
     setStoreName(storeData.name || '')
@@ -43,7 +47,7 @@ export default function App() {
     return (
       <div className="app">
         <div className="phone-frame">
-          <LoginScreen onLogin={handleLogin} />
+          <LoginScreen onLogin={handleLogin} initialLanguage={language} />
         </div>
       </div>
     )
@@ -64,10 +68,19 @@ export default function App() {
             />
           </div>
           <div style={{ display: activePage === 'analytics' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
-            <AnalyticsPage phone={phone} storeName={storeName} />
+            <AnalyticsPage phone={phone} storeName={storeName} language={language} />
           </div>
           <div style={{ display: activePage === 'dues' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
-            <DuesPage phone={phone} storeName={storeName} />
+            <DuesPage phone={phone} storeName={storeName} language={language} />
+          </div>
+          <div style={{ display: activePage === 'profile' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
+            <ProfilePage
+              phone={phone}
+              storeName={storeName}
+              language={language}
+              onLanguageChange={handleLanguageChange}
+              onLogout={handleLogout}
+            />
           </div>
         </div>
 
@@ -93,6 +106,13 @@ export default function App() {
           >
             <span className="nav-icon">👥</span>
             <span className="nav-label">Dues &amp; Staff</span>
+          </button>
+          <button
+            className={`nav-tab ${activePage === 'profile' ? 'active' : ''}`}
+            onClick={() => setActivePage('profile')}
+          >
+            <span className="nav-icon">👤</span>
+            <span className="nav-label">Profile</span>
           </button>
         </nav>
       </div>

@@ -139,14 +139,17 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
       const side = isIn ? 'in' : 'out'
       const cat = t.person_category
 
+      // person_category always wins over inferred transaction type
       if (cat === 'staff') {
         staff[side].push({ name: t.person_name || '', amount: String(t.amount || ''), _txn: t })
-      } else if (cat === 'customer' || t.type === 'udhaar_received' || t.type === 'udhaar_given') {
-        dues[side].push({ desc: t.description || '', billNo: t.bill_number || '', amount: String(t.amount || ''), _txn: t })
-      } else if (cat === 'supplier') {
+      } else if (cat === 'supplier' || cat === 'other') {
+        // Supplier and "Other" — both go to the Others section regardless of txn type
         others[side].push({ name: t.person_name || '', amount: String(t.amount || ''), _txn: t })
+      } else if (cat === 'customer' || (!cat && (t.type === 'udhaar_received' || t.type === 'udhaar_given'))) {
+        // Customer explicitly, OR udhaar type with no explicit category override
+        dues[side].push({ desc: t.description || '', billNo: t.bill_number || '', amount: String(t.amount || ''), _txn: t })
       } else {
-        // General row
+        // General row (home, unknown, no category)
         const row = { particulars: t.description || '', amount: String(t.amount || ''), _txn: t }
         if (isIn) general.inRows.push(row)
         else general.outRows.push(row)

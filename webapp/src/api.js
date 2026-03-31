@@ -55,8 +55,10 @@ export async function pollMessages(phone, afterId = 0) {
   // returns { messages: [{id, direction, body, media_url, created_at}], processing }
 }
 
-export async function fetchAnalytics(phone, period = 'day') {
-  const r = await fetch(`${BASE}/analytics?phone=${encodeURIComponent(phone)}&period=${period}`)
+export async function fetchAnalytics(phone, period = 'day', start = null, end = null) {
+  let url = `${BASE}/analytics?phone=${encodeURIComponent(phone)}&period=${period}`
+  if (start && end) url += `&start=${start}&end=${end}`
+  const r = await fetch(url)
   if (!r.ok) throw new Error('Analytics fetch failed')
   return r.json()
 }
@@ -144,11 +146,48 @@ export async function classifyPersonsBatch(phone, classifications) {
   return r.json()
 }
 
+export async function clearChat(phone) {
+  const r = await fetch(`${BASE}/messages?phone=${encodeURIComponent(phone)}`, {
+    method: 'DELETE',
+  })
+  if (!r.ok) throw new Error('Clear chat failed')
+  return r.json()
+}
+
+export async function fetchProfile(phone) {
+  const r = await fetch(`${BASE}/profile?phone=${encodeURIComponent(phone)}`)
+  if (!r.ok) throw new Error('Profile fetch failed')
+  return r.json()
+  // returns { name, language, segment, joined, phone }
+}
+
+export async function updateProfile(phone, updates) {
+  const r = await fetch(`${BASE}/profile`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone, ...updates }),
+  })
+  if (!r.ok) throw new Error('Profile update failed')
+  return r.json()
+}
+
 export async function dismissMessage(phone, botMessageId) {
   const r = await fetch(`${BASE}/dismiss?phone=${encodeURIComponent(phone)}&bot_message_id=${botMessageId}`, {
     method: 'POST',
   })
   if (!r.ok) return  // non-critical
+  return r.json()
+}
+
+export async function dismissBulk(phone, messageIds, cancelText = null) {
+  // Bulk-dismiss ack messages and optionally persist a cancel message.
+  // Returns { ok, cancel_msg_id } — cancel_msg_id is the DB id of the persisted cancel message (or null).
+  const r = await fetch(`${BASE}/dismiss-bulk`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone, message_ids: messageIds, cancel_text: cancelText }),
+  })
+  if (!r.ok) return { ok: false, cancel_msg_id: null }  // best-effort, non-critical
   return r.json()
 }
 

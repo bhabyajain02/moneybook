@@ -5,7 +5,8 @@ import QuickReplies from './QuickReplies.jsx'
 import InputBar from './InputBar.jsx'
 import LedgerEntry from './LedgerEntry.jsx'
 import PersonClassifyWidget from './PersonClassifyWidget.jsx'
-import { sendMessage, sendImage, pollMessages, confirmTransactions, dismissMessage, fetchStaff, classifyPersonsBatch } from '../api.js'
+import { sendMessage, sendImage, pollMessages, confirmTransactions, dismissMessage, dismissBulk, fetchStaff, classifyPersonsBatch, clearChat } from '../api.js'
+import { t } from '../translations.js'
 
 const LANGUAGES = [
   { key: 'english',  label: 'English' },
@@ -225,8 +226,15 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
 
     try {
       setUploadPct(50)
-      await sendImage(phone, file, language)
+      const resp = await sendImage(phone, file, language)
       setUploadPct(100)
+
+      // Swap temp ID → real DB ID so polling dedup skips this message
+      const realId = resp?.user_message_id
+      if (realId) {
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, id: realId } : m))
+        lastIdRef.current = Math.max(lastIdRef.current, realId)
+      }
       setProcessing(true)
     } catch (e) {
       setMessages(prev => [...prev, {
@@ -247,13 +255,18 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
       // Retrieve the original AI-parsed transactions for diff-based learning
       const originals = originalTxnsRef.current[botMsgId] || null
       const resp = await confirmTransactions(phone, editedTxns, botMsgId, originals)
-      // Transform the ConfirmCard message in-place to a SavedCard (no new message)
-      setMessages(prev => prev.map(m =>
-        m.id === botMsgId
-          ? { ...m, metadata: { confirmed_transactions: resp.confirmed_transactions } }
-          : m
-      ))
-      // Clean up stored originals for this message
+      // Collect ack IDs before mutating state, then dismiss in DB (best-effort)
+      const ackIds = findAckIds(messages, botMsgId)
+      if (ackIds.length > 0) dismissBulk(phone, ackIds).catch(() => {})
+      // Remove ack and intermediates, then transform ConfirmCard → SavedCard
+      setMessages(prev => {
+        const cleaned = removeIntermediates(prev, botMsgId)
+        return cleaned.map(m =>
+          m.id === botMsgId
+            ? { ...m, metadata: { confirmed_transactions: resp.confirmed_transactions } }
+            : m
+        )
+      })
       delete originalTxnsRef.current[botMsgId]
       setQuickReplies([])
     } catch (e) {
@@ -308,17 +321,20 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
     const originals = originalTxnsRef.current[msgId] || null
     try {
       const resp = await confirmTransactions(phone, editedTxns, msgId, originals)
-      // Replace the hidden bot message with a SavedCard
-      setMessages(prev => prev.map(m =>
-        m.id === msgId
-          ? { ...m, metadata: { confirmed_transactions: resp.confirmed_transactions } }
-          : m
-      ))
+      // Dismiss ack messages in DB before mutating state
+      const ackIds = findAckIds(messages, msgId)
+      if (ackIds.length > 0) dismissBulk(phone, ackIds).catch(() => {})
+      // Remove ack intermediates, transform hidden bot msg → SavedCard
+      setMessages(prev => {
+        const cleaned = removeIntermediates(prev, msgId)
+        return cleaned.map(m =>
+          m.id === msgId
+            ? { ...m, metadata: { confirmed_transactions: resp.confirmed_transactions } }
+            : m
+        )
+      })
       delete originalTxnsRef.current[msgId]
-      // Close the modal BEFORE polling so handlePhotoCancel can't fire and
-      // call dismissMessage (which would wipe the classifying bot_state).
       setPhotoReview(null)
-      // If backend started a classification flow, fetch it immediately
       if (resp.classification_pending) await poll()
     } catch (e) {
       setMessages(prev => [...prev, {
@@ -331,9 +347,30 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
   }
 
   async function handlePhotoCancel() {
-    if (photoReview?.msgId) {
-      dismissMessage(phone, photoReview.msgId).catch(() => {})
-      delete originalTxnsRef.current[photoReview.msgId]
+    const msgId = photoReview?.msgId
+    if (msgId) {
+      const tempId = Date.now()
+      const cancelMsg = {
+        id: tempId, direction: 'bot',
+        body: t('cancel_expense', language),
+        created_at: new Date().toISOString()
+      }
+      // Remove ack + hidden bot msg, show cancel message
+      const ackIds = findAckIds(messages, msgId)
+      setMessages(prev => {
+        const cleaned = removeIntermediates(prev, msgId).filter(m => m.id !== msgId)
+        return [...cleaned, cancelMsg]
+      })
+      delete originalTxnsRef.current[msgId]
+      // Persist dismissals + cancel message to DB so they survive reload
+      const idsToDissmiss = [...ackIds, msgId]
+      dismissBulk(phone, idsToDissmiss, t('cancel_expense', language))
+        .then(res => {
+          if (res?.cancel_msg_id) {
+            setMessages(prev => prev.map(m => m.id === tempId ? { ...m, id: res.cancel_msg_id } : m))
+          }
+        })
+        .catch(() => {})
     }
     setPhotoReview(null)
   }
@@ -376,20 +413,107 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
   }
 
   function handleClassifyCancel() {
-    if (classifyWidget?.msgId) {
-      dismissMessage(phone, classifyWidget.msgId).catch(() => {})
-      delete originalTxnsRef.current[classifyWidget.msgId]
+    const msgId = classifyWidget?.msgId
+    if (msgId) {
+      const tempId = Date.now()
+      const cancelMsg = {
+        id: tempId, direction: 'bot',
+        body: t('cancel_expense', language),
+        created_at: new Date().toISOString()
+      }
+      const ackIds = findAckIds(messages, msgId)
+      setMessages(prev => {
+        const cleaned = removeIntermediates(prev, msgId).filter(m => m.id !== msgId)
+        return [...cleaned, cancelMsg]
+      })
+      delete originalTxnsRef.current[msgId]
+      // Persist dismissals + cancel message to DB so they survive reload
+      const idsToDissmiss = [...ackIds, msgId]
+      dismissBulk(phone, idsToDissmiss, t('cancel_expense', language))
+        .then(res => {
+          if (res?.cancel_msg_id) {
+            setMessages(prev => prev.map(m => m.id === tempId ? { ...m, id: res.cancel_msg_id } : m))
+          }
+        })
+        .catch(() => {})
     }
     setClassifyWidget(null)
   }
 
+  // ── Remove intermediate bot messages between a user image and a bot msg ──
+  // Used to clean up the "Photo padh raha hoon..." ack after save/cancel
+  function removeIntermediates(prev, msgId) {
+    const msgIndex = prev.findIndex(m => m.id === msgId)
+    if (msgIndex === -1) return prev
+    let imageIndex = -1
+    for (let i = msgIndex - 1; i >= 0; i--) {
+      if (prev[i].direction === 'user' && prev[i].media_url) {
+        imageIndex = i
+        break
+      }
+    }
+    if (imageIndex === -1) return prev
+    // Remove bot messages between imageIndex and msgIndex (not including msgId)
+    return prev.filter((m, i) => !(i > imageIndex && i < msgIndex && m.direction === 'bot'))
+  }
+
+  // ── Collect DB IDs of ack bot messages between a user image and msgId ──
+  // These are the messages we need to mark as dismissed in the DB so they
+  // don't reappear on reload.
+  function findAckIds(msgs, msgId) {
+    const msgIndex = msgs.findIndex(m => m.id === msgId)
+    if (msgIndex === -1) return []
+    let imageIndex = -1
+    for (let i = msgIndex - 1; i >= 0; i--) {
+      if (msgs[i].direction === 'user' && msgs[i].media_url) {
+        imageIndex = i
+        break
+      }
+    }
+    if (imageIndex === -1) return []
+    return msgs
+      .slice(imageIndex + 1, msgIndex)
+      .filter(m => m.direction === 'bot' && typeof m.id === 'number')
+      .map(m => m.id)
+  }
+
   async function handleCancelConfirm(botMsgId) {
-    // Remove the ConfirmCard message from chat immediately
-    setMessages(prev => prev.filter(m => m.id !== botMsgId))
-    // Clean up stored originals
+    const tempId = Date.now()
+    const cancelMsg = {
+      id: tempId, direction: 'bot',
+      body: t('cancel_expense', language),
+      created_at: new Date().toISOString()
+    }
+    // Remove ConfirmCard + all intermediate bot msgs (ack) between image and card, then add cancel msg
+    const ackIds = findAckIds(messages, botMsgId)
+    setMessages(prev => {
+      const cleaned = removeIntermediates(prev, botMsgId).filter(m => m.id !== botMsgId)
+      return [...cleaned, cancelMsg]
+    })
     delete originalTxnsRef.current[botMsgId]
-    // Tell server to mark dismissed so it doesn't reappear on reload
-    dismissMessage(phone, botMsgId).catch(() => {})
+    // Persist dismissals + cancel message to DB so they survive reload
+    const idsToDissmiss = [...ackIds, botMsgId]
+    dismissBulk(phone, idsToDissmiss, t('cancel_expense', language))
+      .then(res => {
+        if (res?.cancel_msg_id) {
+          setMessages(prev => prev.map(m => m.id === tempId ? { ...m, id: res.cancel_msg_id } : m))
+        }
+      })
+      .catch(() => {})
+  }
+
+  // ── Clear entire chat ─────────────────────────────────────────────
+  async function handleClearChat() {
+    if (!window.confirm(t('clear_confirm', language))) return
+    try {
+      await clearChat(phone)
+      setMessages([])
+      lastIdRef.current = 0
+      setQuickReplies([])
+      setProcessing(false)
+    } catch (e) {
+      console.error('Clear chat failed:', e)
+    }
   }
 
   const chips = deriveChips(quickReplies)
@@ -405,7 +529,7 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
           <div className="header-name">{storeName || 'MoneyBook'}</div>
           <div className="header-status">
             <span className="online-dot" />
-            {processing ? 'Photo padh raha hoon...' : 'Online'}
+            {processing ? t('processing_status', language) : 'Online'}
           </div>
         </div>
         {/* Language switcher */}
@@ -437,6 +561,20 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
 
         <button
           className="icon-btn"
+          onClick={handleClearChat}
+          title={t('clear_chat', language)}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.8)" strokeWidth="2"
+               strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="3 6 5 6 21 6"/>
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+            <path d="M10 11v6M14 11v6"/>
+            <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+          </svg>
+        </button>
+
+        <button
+          className="icon-btn"
           onClick={onLogout}
           title="Logout"
         >
@@ -455,8 +593,8 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
           <div className="empty-chat">
             <div className="emoji">📒</div>
             <p>
-              <b>MoneyBook mein swagat hai!</b><br/>
-              Text mein entry likhein ya notebook ki photo bhejein.
+              <b>{t('empty_title', language)}</b><br/>
+              {t('empty_body', language)}
             </p>
           </div>
         ) : (

@@ -46,9 +46,9 @@ from moneybook_db import (
     get_udhaar_aging, get_weekly_summary,
     save_correction, build_store_context,
     get_store_segment, promote_correction,
-    save_web_message, get_web_messages,
+    save_web_message, get_web_messages, clear_store_data,
     get_daily_trend, get_staff_payments, get_payment_mode_split,
-    get_top_receivers, get_dues_with_detail, get_staff_detail,
+    get_top_receivers, get_others_summary, get_dues_with_detail, get_staff_detail,
     update_udhaar_contact,
     update_message_metadata, delete_transaction,
     get_person_udhaar_history,
@@ -1071,6 +1071,50 @@ async def api_get_messages(phone: str, after_id: int = 0):
     }
 
 
+@app.get('/api/profile')
+async def api_get_profile(phone: str):
+    """Return store profile info for the Profile page."""
+    store = get_or_create_store(phone)
+    return {
+        'name':     store.get('name') or '',
+        'language': store.get('language') or 'hinglish',
+        'segment':  store.get('segment') or 'general',
+        'joined':   store.get('created_at') or None,
+        'phone':    phone,
+    }
+
+
+class ProfileUpdate(BaseModel):
+    phone:    str
+    name:     str | None = None
+    language: str | None = None
+    segment:  str | None = None
+
+
+@app.put('/api/profile')
+async def api_update_profile(req: ProfileUpdate):
+    """Update store name and/or language."""
+    store = get_or_create_store(req.phone)
+    updates = {}
+    if req.name is not None:
+        updates['name'] = req.name.strip()
+    if req.language is not None:
+        updates['language'] = req.language
+    if req.segment is not None:
+        updates['segment'] = req.segment
+    if updates:
+        update_store(store['id'], **updates)
+    return {'ok': True}
+
+
+@app.delete('/api/messages')
+async def api_clear_chat(phone: str):
+    """Clear all messages AND transactions for a store, reset bot state."""
+    store = get_or_create_store(phone)
+    clear_store_data(store['id'])
+    return {'ok': True}
+
+
 @app.post('/api/confirm')
 async def api_confirm(req: ConfirmRequest):
     """Save (possibly edited) transactions from the confirm card UI."""
@@ -1188,6 +1232,28 @@ async def api_dismiss(phone: str, bot_message_id: int):
     return {'ok': True}
 
 
+class DismissBulkRequest(BaseModel):
+    phone: str
+    message_ids: list  # list of int message IDs to mark dismissed
+    cancel_text: Optional[str] = None  # if provided, save as a new bot message
+
+
+@app.post('/api/dismiss-bulk')
+async def api_dismiss_bulk(req: DismissBulkRequest):
+    """Bulk-dismiss ack messages and optionally persist a cancel message."""
+    store = get_or_create_store(req.phone)
+    sid = store['id']
+    for mid in req.message_ids:
+        try:
+            update_message_metadata(mid, {'dismissed': True})
+        except Exception:
+            pass  # best-effort; ignore missing IDs
+    cancel_msg_id = None
+    if req.cancel_text:
+        cancel_msg_id = save_web_message(sid, 'bot', req.cancel_text)
+    return {'ok': True, 'cancel_msg_id': cancel_msg_id}
+
+
 @app.delete('/api/transaction')
 async def api_delete_transaction(phone: str, txn_id: int):
     """Hard-delete a single saved transaction."""
@@ -1203,13 +1269,26 @@ async def api_delete_transaction(phone: str, txn_id: int):
 # ─────────────────────────────────────────────────────────────────
 
 @app.get('/api/analytics')
-async def api_analytics(phone: str, period: str = 'day'):
-    """Returns analytics data for the given period."""
+async def api_analytics(
+    phone: str,
+    period: str = 'day',
+    start: Optional[str] = None,   # YYYY-MM-DD  — custom range override
+    end:   Optional[str] = None,   # YYYY-MM-DD  — custom range override
+):
+    """Returns analytics data for the given period or a custom date range."""
     store = get_or_create_store(phone)
     sid = store['id']
     today = date.today()
 
-    if period == 'day':
+    if start and end:
+        # Custom date range supplied directly — validate and use as-is
+        try:
+            date.fromisoformat(start)
+            date.fromisoformat(end)
+        except ValueError:
+            raise HTTPException(status_code=400, detail='Invalid date format. Use YYYY-MM-DD.')
+        period = 'custom'
+    elif period == 'day':
         start = today.isoformat()
         end   = today.isoformat()
     elif period == 'week':
@@ -1239,6 +1318,7 @@ async def api_analytics(phone: str, period: str = 'day'):
     staff_payments   = get_staff_payments(sid, start, end)
     payment_split    = get_payment_mode_split(sid, start, end)
     top_receivers    = get_top_receivers(sid, start, end)
+    others_summary   = get_others_summary(sid, start, end)
 
     # Quick dues summary for click-through
     udhaar_list = get_udhaar_outstanding(sid)   # already fetched above for udhaar_out
@@ -1267,6 +1347,7 @@ async def api_analytics(phone: str, period: str = 'day'):
         'payment_split':  payment_split,
         'top_receivers':  top_receivers,
         'dues_summary':   dues_summary,
+        'others_summary': others_summary,
     }
 
 

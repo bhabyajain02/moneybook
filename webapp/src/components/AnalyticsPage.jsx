@@ -1,213 +1,780 @@
-import { useState, useEffect } from 'react'
-import { fetchAnalytics } from '../api.js'
+import { useState, useEffect } from "react";
+import { fetchAnalytics } from "../api.js";
 
-const PERIODS = [
-  { key: 'day',   label: 'Today' },
-  { key: 'week',  label: 'Week' },
-  { key: 'month', label: 'Month' },
-  { key: 'year',  label: 'Year' },
-]
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function fmtRsFull(val) {
+  const n = parseFloat(val) || 0;
+  return `₹${n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
 
 function fmtRs(val) {
-  const n = parseFloat(val) || 0
-  if (n >= 10000000) return `₹${(n / 10000000).toFixed(1)}Cr`
-  if (n >= 100000)   return `₹${(n / 100000).toFixed(1)}L`
-  if (n >= 1000)     return `₹${(n / 1000).toFixed(1)}K`
-  return `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
+  const n = parseFloat(val) || 0;
+  if (n >= 10000000) return `₹${(n / 10000000).toFixed(2)}Cr`;
+  if (n >= 100000) return `₹${(n / 100000).toFixed(2)}L`;
+  return `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 }
 
-function ExpenseRow({ tag, amount, total }) {
-  const pct   = total ? Math.round((amount / total) * 100) : 0
-  const label = tag.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+const TAG_META = {
+  upi: { icon: "💳", color: "#4CAF50" },
+  upi_collection: { icon: "💳", color: "#4CAF50" },
+  upi_payment: { icon: "💳", color: "#4CAF50" },
+  pos: { icon: "🖥️", color: "#1E88E5" },
+  pos_collection: { icon: "🖥️", color: "#1E88E5" },
+  cash: { icon: "💵", color: "#43A047" },
+  cash_collection: { icon: "💵", color: "#43A047" },
+  cash_in_hand: { icon: "💵", color: "#43A047" },
+  bank: { icon: "🏦", color: "#039BE5" },
+  neft: { icon: "🏦", color: "#039BE5" },
+  rtgs: { icon: "🏦", color: "#039BE5" },
+  imps: { icon: "🏦", color: "#039BE5" },
+  staff_expense: { icon: "👷", color: "#FF9800" },
+  staff_salary: { icon: "👷", color: "#FF9800" },
+  staff: { icon: "👷", color: "#FF9800" },
+  cash_discount: { icon: "🏷️", color: "#9C27B0" },
+  discount: { icon: "🏷️", color: "#9C27B0" },
+  rent: { icon: "🏠", color: "#F44336" },
+  electricity: { icon: "⚡", color: "#FFC107" },
+  food: { icon: "🍽️", color: "#8BC34A" },
+  transport: { icon: "🚗", color: "#03A9F4" },
+  purchase: { icon: "🛒", color: "#FF5722" },
+  other: { icon: "📋", color: "#607D8B" },
+  store_expense: { icon: "🏪", color: "#795548" },
+};
+
+// Tags that represent payment channels / revenue collections — NOT true expenses
+const COLLECTION_KEYWORDS = [
+  "upi",
+  "pos",
+  "cash",
+  "neft",
+  "rtgs",
+  "imps",
+  "bank_transfer",
+  "paytm",
+  "gpay",
+  "phonepe",
+  "online",
+  "digital",
+  "collection",
+  "receipt",
+  "received",
+  "settlement",
+];
+
+function isCollection(tag) {
+  const lower = (tag || "").toLowerCase();
+  return COLLECTION_KEYWORDS.some((k) => lower.includes(k));
+}
+
+function getMeta(tag) {
+  const lower = (tag || "").toLowerCase();
+  for (const [key, meta] of Object.entries(TAG_META)) {
+    if (lower.includes(key)) return meta;
+  }
+  return { icon: "📊", color: "#00897B" };
+}
+
+function toLabel(tag, customLabels) {
+  if (customLabels[tag]) return customLabels[tag];
+  return tag.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// ── Mini bar spark ────────────────────────────────────────────────────────────
+
+function MiniBars({ pct, color }) {
+  // 4-bar sparkline; the 3rd bar reflects the actual pct
+  const heights = [45, 70, Math.max(20, pct), 85];
   return (
-    <div className="expense-row">
-      <div className="expense-row-top">
-        <span className="expense-row-label">{label}</span>
-        <span className="expense-row-amount">{fmtRs(amount)}</span>
-        <span className="expense-row-pct">{pct}%</span>
-      </div>
-      <div className="expense-bar-track">
-        <div className="expense-bar-fill" style={{ width: `${Math.max(2, pct)}%` }} />
+    <svg
+      width="34"
+      height="24"
+      viewBox="0 0 34 24"
+      style={{ display: "block" }}
+    >
+      {heights.map((h, i) => (
+        <rect
+          key={i}
+          x={i * 9}
+          y={24 - (24 * h) / 100}
+          width="7"
+          height={(24 * h) / 100}
+          fill={i === 2 ? color : `${color}55`}
+          rx="1.5"
+        />
+      ))}
+    </svg>
+  );
+}
+
+// ── Edit label modal ──────────────────────────────────────────────────────────
+
+const PERIODS = [
+  { key: "day", label: "Today" },
+  { key: "week", label: "Week" },
+  { key: "month", label: "Month" },
+  { key: "year", label: "Year" },
+];
+
+// ── Date range picker modal ───────────────────────────────────────────────────
+
+function DateRangeModal({ onApply, onClose }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [from, setFrom] = useState(today);
+  const [to, setTo] = useState(today);
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.45)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 1000,
+      }}
+    >
+      <div
+        style={{
+          background: "#fff",
+          borderRadius: 18,
+          padding: "24px 20px",
+          width: 300,
+          boxShadow: "0 12px 40px rgba(0,0,0,0.22)",
+        }}
+      >
+        <div
+          style={{
+            fontSize: 16,
+            fontWeight: 700,
+            color: "#1a1a1a",
+            marginBottom: 20,
+          }}
+        >
+          📅 Custom Date Range
+        </div>
+
+        {[
+          { label: "FROM", val: from, set: setFrom },
+          { label: "TO", val: to, set: setTo },
+        ].map(({ label, val, set }) => (
+          <div key={label} style={{ marginBottom: 14 }}>
+            <div
+              style={{
+                fontSize: 11,
+                color: "#888",
+                letterSpacing: 0.8,
+                marginBottom: 5,
+              }}
+            >
+              {label}
+            </div>
+            <input
+              type="date"
+              value={val}
+              max={today}
+              onChange={(e) => set(e.target.value)}
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                borderRadius: 9,
+                border: "1.5px solid #00897B",
+                outline: "none",
+                fontSize: 14,
+                boxSizing: "border-box",
+                color: "#1a1a1a",
+              }}
+            />
+          </div>
+        ))}
+
+        <div style={{ display: "flex", gap: 10, marginTop: 8 }}>
+          <button
+            onClick={onClose}
+            style={{
+              flex: 1,
+              padding: "11px 0",
+              borderRadius: 9,
+              border: "1.5px solid #e0e0e0",
+              background: "#fff",
+              cursor: "pointer",
+              fontSize: 14,
+              color: "#666",
+              fontWeight: 500,
+            }}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => {
+              if (from && to) onApply(from, to);
+            }}
+            disabled={!from || !to || from > to}
+            style={{
+              flex: 1,
+              padding: "11px 0",
+              borderRadius: 9,
+              border: "none",
+              background: from && to && from <= to ? "#00897B" : "#ccc",
+              color: "#fff",
+              cursor: from && to && from <= to ? "pointer" : "default",
+              fontSize: 14,
+              fontWeight: 700,
+            }}
+          >
+            Apply
+          </button>
+        </div>
       </div>
     </div>
-  )
+  );
 }
 
-// ── Accordion section ────────────────────────────────────────────
-function AccordionSection({ icon, title, summary, color, children, defaultOpen = false }) {
-  const [open, setOpen] = useState(defaultOpen)
-  return (
-    <div className={`accordion-section ${open ? 'open' : ''}`}>
-      <button className="accordion-header" onClick={() => setOpen(o => !o)}>
-        <span className="accordion-icon">{icon}</span>
-        <span className="accordion-title">{title}</span>
-        <span className="accordion-summary" style={{ color }}>{summary}</span>
-        <span className="accordion-chevron">{open ? '▲' : '▼'}</span>
-      </button>
-      {open && <div className="accordion-body">{children}</div>}
-    </div>
-  )
-}
+// ── Main component ────────────────────────────────────────────────────────────
 
-// ── Stat row inside accordion ────────────────────────────────────
-function StatRow({ label, value, color, sub }) {
-  return (
-    <div className="stat-row">
-      <span className="stat-row-label">{label}</span>
-      <div>
-        <span className="stat-row-value" style={{ color }}>{fmtRs(value)}</span>
-        {sub && <span className="stat-row-sub">{sub}</span>}
-      </div>
-    </div>
-  )
-}
-
-export default function AnalyticsPage({ phone, storeName }) {
-  const [period,  setPeriod]  = useState('day')
-  const [data,    setData]    = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [error,   setError]   = useState(null)
+export default function AnalyticsPage({
+  phone,
+  storeName,
+  language = "hinglish",
+}) {
+  const [period, setPeriod] = useState("day");
+  const [customRange, setCustomRange] = useState(null); // { start, end } when custom
+  const [showDatePick, setShowDatePick] = useState(false);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
-    setData(null)
-    setLoading(true)
-    setError(null)
-    fetchAnalytics(phone, period)
+    setData(null);
+    setLoading(true);
+    setError(null);
+    const { start, end } = customRange || {};
+    fetchAnalytics(phone, period, start || null, end || null)
       .then(setData)
-      .catch(e => setError(e.message))
-      .finally(() => setLoading(false))
-  }, [phone, period])
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [phone, period, customRange]);
 
-  const kpis         = data?.kpis || {}
-  const pnl          = kpis.net_pnl || 0
-  const totalExpTags = Object.values(data?.expense_tags || {}).reduce((a, b) => a + b, 0)
-  const expCount     = Object.keys(data?.expense_tags || {}).length
-  const staffCount   = data?.staff_payments?.length || 0
-  const duesCount    = data?.dues_summary?.length || 0
+  function handlePeriodClick(key) {
+    setPeriod(key);
+    setCustomRange(null); // clear custom range when switching preset
+  }
 
+  function handleCustomApply(start, end) {
+    setCustomRange({ start, end });
+    setPeriod("custom");
+    setShowDatePick(false);
+  }
+
+  // Label shown on the calendar button when a custom range is active
+  const calLabel = customRange
+    ? `${customRange.start.slice(5)} → ${customRange.end.slice(5)}` // MM-DD → MM-DD
+    : null;
+
+  // ── Build split category lists ───────────────────────────────────────────────
+  const kpis = data?.kpis || {};
+  const totalExpenses = kpis.total_expenses || 0;
+
+  const { expenseCats, collectionCats } = (() => {
+    if (!data) return { expenseCats: [], collectionCats: [] };
+    const collections = [];
+    let staffTotal = kpis.staff_expenses || 0; // staff_salary from kpis
+    let discountTotal = 0;
+    let storeTotal = 0;
+
+    Object.entries(data.expense_tags || {}).forEach(([tag, amt]) => {
+      if (tag === "other") return;
+
+      const lower = tag.toLowerCase();
+
+      // ✅ HANDLE DISCOUNT FIRST
+      if (lower.includes("discount")) {
+        discountTotal += amt;
+        return;
+      }
+
+      // ❗ THEN check collection
+      if (isCollection(tag)) {
+        collections.push({ tag, amt });
+        return;
+      }
+
+      if (lower.includes("staff")) {
+        staffTotal += amt;
+      } else {
+        storeTotal += amt;
+      }
+    });
+
+    const expenses = [];
+    if (staffTotal > 0)
+      expenses.push({ tag: "staff_expense", amt: staffTotal });
+    if (discountTotal > 0)
+      expenses.push({ tag: "cash_discount", amt: discountTotal });
+    if (storeTotal > 0)
+      expenses.push({ tag: "store_expense", amt: storeTotal });
+
+    return {
+      expenseCats: expenses.sort((a, b) => b.amt - a.amt),
+      collectionCats: collections.sort((a, b) => b.amt - a.amt),
+    };
+  })();
+
+  const expenseTotal = expenseCats.reduce((s, c) => s + c.amt, 0) || 1;
+  const collectionTotal = collectionCats.reduce((s, c) => s + c.amt, 0) || 1;
+
+  // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <div className="analytics-page">
-      {/* Header */}
-      <div className="chat-header">
-        <div className="header-avatar">📊</div>
-        <div className="header-info">
-          <div className="header-name">{storeName || 'Analytics'}</div>
-          <div className="header-status">Business Insights</div>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        background: "#F0F4F3",
+        fontFamily: "system-ui, -apple-system, sans-serif",
+        overflow: "hidden",
+      }}
+    >
+      {/* ══ Hero card (dark teal) ═══════════════════════════════════════════ */}
+      <div
+        style={{
+          background: "linear-gradient(140deg, #00695C 0%, #00897B 100%)",
+          padding: "18px 18px 0",
+          boxShadow: "0 4px 24px rgba(0,105,92,0.35)",
+          flexShrink: 0,
+        }}
+      >
+        {/* Header row */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 18,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: "50%",
+                background: "rgba(255,255,255,0.25)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 16,
+              }}
+            >
+              👤
+            </div>
+            <span
+              style={{
+                color: "#fff",
+                fontWeight: 600,
+                fontSize: 14,
+                lineHeight: 1.3,
+              }}
+            >
+              {storeName || "Store"}
+              <br />
+              <span style={{ fontWeight: 400, fontSize: 12, opacity: 0.8 }}>
+                Business Insights
+              </span>
+            </span>
+          </div>
+          <span style={{ fontSize: 20, cursor: "pointer", opacity: 0.85 }}>
+            ⚙️
+          </span>
+        </div>
+
+        {/* Total expenses */}
+        <div style={{ marginBottom: 18 }}>
+          <div
+            style={{
+              color: "rgba(255,255,255,0.65)",
+              fontSize: 10,
+              letterSpacing: 2,
+              fontWeight: 600,
+              marginBottom: 6,
+            }}
+          >
+            TOTAL EXPENSES
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div
+              style={{
+                color: "#fff",
+                fontSize: 30,
+                fontWeight: 800,
+                letterSpacing: -0.5,
+              }}
+            >
+              {loading ? "—" : fmtRsFull(totalExpenses)}
+            </div>
+          </div>
+        </div>
+
+        {/* Period tabs + calendar */}
+        <div style={{ display: "flex", alignItems: "flex-end" }}>
+          {PERIODS.map((p) => (
+            <button
+              key={p.key}
+              onClick={() => handlePeriodClick(p.key)}
+              style={{
+                flex: 1,
+                padding: "10px 0",
+                border: "none",
+                cursor: "pointer",
+                background: "transparent",
+                color: period === p.key ? "#fff" : "rgba(255,255,255,0.55)",
+                fontWeight: period === p.key ? 700 : 400,
+                fontSize: 13,
+                borderBottom:
+                  period === p.key
+                    ? "2.5px solid #fff"
+                    : "2.5px solid transparent",
+              }}
+            >
+              {p.label}
+            </button>
+          ))}
+
+          {/* Calendar / custom range button */}
+          <button
+            onClick={() => setShowDatePick(true)}
+            title="Custom date range"
+            style={{
+              padding: "8px 10px",
+              border: "none",
+              cursor: "pointer",
+              background:
+                period === "custom" ? "rgba(255,255,255,0.2)" : "transparent",
+              borderRadius: "8px 8px 0 0",
+              borderBottom:
+                period === "custom"
+                  ? "2.5px solid #fff"
+                  : "2.5px solid transparent",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: 1,
+              marginBottom: 0,
+            }}
+          >
+            <span style={{ fontSize: 16 }}>📅</span>
+            {calLabel && (
+              <span
+                style={{
+                  fontSize: 9,
+                  color: "#fff",
+                  opacity: 0.85,
+                  lineHeight: 1,
+                }}
+              >
+                {calLabel}
+              </span>
+            )}
+          </button>
         </div>
       </div>
 
-      {/* Period Selector */}
-      <div className="period-tabs">
-        {PERIODS.map(p => (
-          <button key={p.key}
-            className={`period-tab ${period === p.key ? 'active' : ''}`}
-            onClick={() => setPeriod(p.key)}>
-            {p.label}
-          </button>
-        ))}
-      </div>
+      {/* ══ Scrollable body ════════════════════════════════════════════════════ */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "18px 14px 24px" }}>
+        {error && (
+          <div
+            style={{
+              background: "#FFEBEE",
+              color: "#C62828",
+              padding: "10px 14px",
+              borderRadius: 10,
+              marginBottom: 14,
+              fontSize: 13,
+            }}
+          >
+            ⚠️ {error}
+          </div>
+        )}
 
-      <div className="analytics-body">
         {loading && (
-          <div className="analytics-loading">
-            <div className="typing-bubble" style={{ margin: '0 auto' }}>
-              <div className="typing-dot"/><div className="typing-dot"/><div className="typing-dot"/>
-            </div>
-            <p style={{ marginTop: 8, color: 'var(--wa-text-meta)', fontSize: 13 }}>Loading...</p>
+          <div
+            style={{ textAlign: "center", padding: "40px 0", color: "#aaa" }}
+          >
+            <div style={{ fontSize: 28, marginBottom: 8 }}>⏳</div>Loading...
           </div>
         )}
 
-        {error && <div className="analytics-error">⚠️ {error}</div>}
-
-        {!loading && !error && data && (
-          <div className="accordion-list">
-
-            {/* ── 1. Expenses ── */}
-            <AccordionSection
-              icon="💸" title="Expenses"
-              summary={kpis.operating_expenses > 0 ? fmtRs(kpis.operating_expenses) : '₹0'}
-              color="#FF7043"
-              defaultOpen={true}
+        {/* ── Expense Categories ─────────────────────────────────────────── */}
+        {!loading && (
+          <div style={{ marginBottom: 20 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 12,
+              }}
             >
-              <StatRow label="Total Ops Expenses" value={kpis.operating_expenses} color="#FF7043"
-                sub={expCount > 0 ? `${expCount} categories` : undefined} />
-              {expCount > 0 ? (
-                <div style={{ marginTop: 10 }}>
-                  {Object.entries(data.expense_tags)
-                    .sort((a, b) => b[1] - a[1])
-                    .map(([tag, amt]) => (
-                      <ExpenseRow key={tag} tag={tag} amount={amt} total={totalExpTags} />
-                    ))
-                  }
-                </div>
-              ) : (
-                <p className="drill-empty">Is period mein koi expenses nahi</p>
-              )}
-            </AccordionSection>
-
-            {/* ── 2. Dues / Udhaar ── */}
-            <AccordionSection
-              icon="⚠️" title="Udhaar / Dues"
-              summary={kpis.udhaar_outstanding > 0 ? fmtRs(kpis.udhaar_outstanding) + ' out' : '₹0'}
-              color="#E53935"
-            >
-              <StatRow label="Total Outstanding" value={kpis.udhaar_outstanding} color="#E53935" />
-              {kpis.udhaar_given_period > 0 &&
-                <StatRow label="Diya this period" value={kpis.udhaar_given_period} color="#FF7043" />}
-              {kpis.udhaar_received_period > 0 &&
-                <StatRow label="Aaya this period" value={kpis.udhaar_received_period} color="#25D366" />}
-              {duesCount > 0 ? (
-                <div style={{ marginTop: 10 }}>
-                  {data.dues_summary.map(d => (
-                    <div key={d.name} className="staff-analytics-row">
-                      <span className="staff-analytics-name">{d.name}</span>
-                      <span className="staff-analytics-total" style={{ color: '#E53935' }}>{fmtRs(d.balance)}</span>
+              <span style={{ fontSize: 15, fontWeight: 700, color: "#1a1a1a" }}>
+                Expense Categories
+              </span>
+            </div>
+            {expenseCats.length === 0 ? (
+              <div
+                style={{
+                  background: "#fff",
+                  borderRadius: 14,
+                  padding: 24,
+                  textAlign: "center",
+                  color: "#aaa",
+                  fontSize: 14,
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+                }}
+              >
+                No expenses recorded this period
+              </div>
+            ) : (
+              expenseCats.map(({ tag, amt }) => {
+                const pct =
+                  totalExpenses > 0
+                    ? Math.round((amt / totalExpenses) * 100)
+                    : 0;
+                const { icon, color } = getMeta(tag);
+                return (
+                  <div
+                    key={tag}
+                    style={{
+                      background: "#fff",
+                      borderRadius: 14,
+                      padding: "14px",
+                      marginBottom: 10,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      boxShadow: "0 2px 10px rgba(0,0,0,0.06)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: 46,
+                        height: 46,
+                        borderRadius: "50%",
+                        flexShrink: 0,
+                        background: `${color}18`,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 22,
+                      }}
+                    >
+                      {icon}
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="drill-empty">Koi pending udhaar nahi</p>
-              )}
-            </AccordionSection>
-
-            {/* ── 3. Staff ── */}
-            <AccordionSection
-              icon="👷" title="Staff"
-              summary={kpis.staff_expenses > 0 ? fmtRs(kpis.staff_expenses) + ' paid' : '₹0'}
-              color="#FF9800"
-            >
-              <StatRow label="Total Staff Paid" value={kpis.staff_expenses} color="#FF9800"
-                sub={staffCount > 0 ? `${staffCount} staff member${staffCount > 1 ? 's' : ''}` : undefined} />
-              {staffCount > 0 ? (
-                <div style={{ marginTop: 10 }}>
-                  {data.staff_payments.map(s => (
-                    <div key={s.person_name} className="staff-analytics-row">
-                      <span className="staff-analytics-name">{s.person_name}</span>
-                      <span className="staff-analytics-count">{s.count} payment{s.count > 1 ? 's' : ''}</span>
-                      <span className="staff-analytics-total">{fmtRs(s.total)}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontSize: 10,
+                          color: "#999",
+                          fontWeight: 700,
+                          letterSpacing: 1,
+                          marginBottom: 2,
+                        }}
+                      >
+                        {toLabel(tag, {}).toUpperCase()}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 20,
+                          fontWeight: 800,
+                          color: "#1a1a1a",
+                          lineHeight: 1.2,
+                        }}
+                      >
+                        {fmtRs(amt)}
+                      </div>
+                      <div
+                        style={{ fontSize: 10, color: "#bbb", marginTop: 2 }}
+                      >
+                        {pct}% OF TOTAL
+                      </div>
                     </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="drill-empty">Is period mein koi staff payment nahi</p>
-              )}
-            </AccordionSection>
+                    <MiniBars pct={pct} color={color} />
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
 
-            {/* ── 4. Sales ── */}
-            <AccordionSection
-              icon="💰" title="Sales"
-              summary={fmtRs(kpis.total_sales)}
-              color="#25D366"
+        {/* ── Collections / Revenue Channels ────────────────────────────────── */}
+        {!loading && collectionCats.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 12,
+              }}
             >
-              <StatRow label="Total Sales" value={kpis.total_sales} color="#25D366" />
-              <StatRow label="Net Profit / Loss" value={Math.abs(pnl)}
-                color={pnl >= 0 ? '#25D366' : '#E53935'}
-                sub={pnl >= 0 ? '📈 Faida' : '📉 Nuksan'} />
-            </AccordionSection>
+              <span style={{ fontSize: 15, fontWeight: 700, color: "#1a1a1a" }}>
+                Revenue Channels
+              </span>
+              <span style={{ fontSize: 11, color: "#888" }}>
+                how money came in
+              </span>
+            </div>
+            {collectionCats.map(({ tag, amt }) => {
+              const pct = Math.round((amt / collectionTotal) * 100);
+              const { icon, color } = getMeta(tag);
+              return (
+                <div
+                  key={tag}
+                  style={{
+                    background: "#fff",
+                    borderRadius: 14,
+                    padding: "14px",
+                    marginBottom: 10,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    boxShadow: "0 2px 10px rgba(0,0,0,0.06)",
+                    borderLeft: `3px solid ${color}`,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 46,
+                      height: 46,
+                      borderRadius: "50%",
+                      flexShrink: 0,
+                      background: `${color}18`,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 22,
+                    }}
+                  >
+                    {icon}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontSize: 10,
+                        color: "#999",
+                        fontWeight: 700,
+                        letterSpacing: 1,
+                        marginBottom: 2,
+                      }}
+                    >
+                      {toLabel(tag, {}).toUpperCase()}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: 20,
+                        fontWeight: 800,
+                        color: "#1a1a1a",
+                        lineHeight: 1.2,
+                      }}
+                    >
+                      {fmtRs(amt)}
+                    </div>
+                    <div style={{ fontSize: 10, color: "#bbb", marginTop: 2 }}>
+                      {pct}% OF COLLECTIONS
+                    </div>
+                  </div>
+                  <MiniBars pct={pct} color={color} />
+                </div>
+              );
+            })}
+          </div>
+        )}
 
+        {/* ── Expense Composition ───────────────────────────────────────────── */}
+        {!loading && expenseCats.length > 0 && (
+          <div
+            style={{
+              background: "#fff",
+              borderRadius: 14,
+              padding: "16px",
+              boxShadow: "0 2px 10px rgba(0,0,0,0.06)",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: "#888",
+                letterSpacing: 1.5,
+                marginBottom: 12,
+              }}
+            >
+              EXPENSE COMPOSITION
+            </div>
+            <div
+              style={{
+                height: 10,
+                borderRadius: 6,
+                overflow: "hidden",
+                display: "flex",
+                marginBottom: 14,
+              }}
+            >
+              {expenseCats.map(({ tag, amt }) => (
+                <div
+                  key={tag}
+                  style={{
+                    width: `${(amt / expenseTotal) * 100}%`,
+                    background: getMeta(tag).color,
+                    transition: "width 0.4s ease",
+                  }}
+                />
+              ))}
+            </div>
+            {expenseCats.map(({ tag, amt }) => {
+              const pct = Math.round((amt / expenseTotal) * 100);
+              const { color } = getMeta(tag);
+              return (
+                <div
+                  key={tag}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    marginBottom: 7,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 10,
+                      height: 10,
+                      borderRadius: "50%",
+                      background: color,
+                      flexShrink: 0,
+                    }}
+                  />
+                  <span style={{ fontSize: 12, color: "#555", flex: 1 }}>
+                    {toLabel(tag, {}).toUpperCase()}
+                  </span>
+                  <span
+                    style={{ fontSize: 12, color: "#888", fontWeight: 700 }}
+                  >
+                    {pct}%
+                  </span>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
+
+      {/* ══ Custom date range picker ════════════════════════════════════════════ */}
+      {showDatePick && (
+        <DateRangeModal
+          onApply={handleCustomApply}
+          onClose={() => setShowDatePick(false)}
+        />
+      )}
     </div>
-  )
+  );
 }
