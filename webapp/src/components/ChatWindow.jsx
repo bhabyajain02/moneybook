@@ -20,6 +20,20 @@ const LANGUAGES = [
   { key: 'punjabi',  label: 'ਪੰਜਾਬੀ' },
 ]
 
+// Pre-translated cancel message (shown when user cancels expense confirmation)
+const EXPENSE_CANCEL_MSG = {
+  english:  '❌ Expense not stored for this fardi.',
+  hindi:    '❌ इस फर्दी का खर्च सेव नहीं हुआ।',
+  hinglish: '❌ Is fardi ka expense save nahi hua.',
+  gujarati: '❌ આ ફર્દીનો ખર્ચ સ્ટોર નહોતો.',
+  marathi:  '❌ या फर्दीचा खर्च जतन झाला नाही.',
+  bengali:  '❌ এই ফর্দির খরচ সংরক্ষণ হয়নি।',
+  tamil:    '❌ இந்த ஃபர்தியின் செலவு சேமிக்கப்படவில்லை.',
+  telugu:   '❌ ఈ ఫర్దీ యొక్క ఖర్చు నిల్వ కాలేదు.',
+  kannada:  '❌ ಈ ಫರ್ದಿಯ ಖರ್ಚು ಉಳಿಸಲಾಗಿಲ್ಲ.',
+  punjabi:  '❌ ਇਸ ਫਰਦੀ ਦਾ ਖਰਚਾ ਸੇਵ ਨਹੀਂ ਹੋਇਆ।',
+}
+
 const POLL_INTERVAL = 2500   // ms
 
 /* Derive quick-reply chips from the last bot message body.
@@ -69,6 +83,7 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
   const bottomRef       = useRef()
   const pollRef         = useRef()
   const langRef         = useRef()
+
   // Stores the original AI-parsed pending_transactions keyed by bot message ID.
   // Captured once on first arrival — never overwritten by edits — so we can
   // diff original vs corrected when the user hits Save.
@@ -108,29 +123,19 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
           const fresh = data.messages.filter(m => !existing.has(m.id))
           if (fresh.length === 0) return prev
           lastIdRef.current = Math.max(lastIdRef.current, ...fresh.map(m => m.id))
-
-          const processed = fresh.map(m => {
-            if (m.direction === 'bot' && m.metadata?.pending_transactions?.length > 0) {
-              // Capture originals for learning — only on first arrival
-              if (!originalTxnsRef.current[m.id]) {
-                originalTxnsRef.current[m.id] = JSON.parse(
-                  JSON.stringify(m.metadata.pending_transactions)
-                )
-              }
-              // Photo-sourced → open modal, hide bot bubble
-              if (m.metadata?.display || m.metadata?.source === 'image') {
-                pendingPhotoRef.current = {
-                  msgId:   m.id,
-                  txns:    m.metadata.pending_transactions,
-                  date:    m.metadata.page_date,
-                  display: m.metadata.display || null,
-                }
-                return { ...m, metadata: { ...m.metadata, overwritten: true } }
-              }
+          // Capture originals for learning — only on first arrival, never overwrite
+          fresh.forEach(m => {
+            if (
+              m.direction === 'bot' &&
+              m.metadata?.pending_transactions &&
+              !originalTxnsRef.current[m.id]
+            ) {
+              originalTxnsRef.current[m.id] = JSON.parse(
+                JSON.stringify(m.metadata.pending_transactions)
+              )
             }
-            return m
           })
-          return [...prev, ...processed]
+            return [...prev, ...fresh]
         })
 
         // Open photo review modal — or classification widget first if persons need classifying
@@ -225,8 +230,16 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
 
     try {
       setUploadPct(50)
-      await sendImage(phone, file, language)
+      const resp = await sendImage(phone, file, language)
       setUploadPct(100)
+
+      // Swap temp ID → real DB ID so the polling dedup correctly skips this message
+      const realId = resp?.user_message_id
+      if (realId) {
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, id: realId } : m))
+        lastIdRef.current = Math.max(lastIdRef.current, realId)
+      }
+
       setProcessing(true)
     } catch (e) {
       setMessages(prev => [...prev, {
@@ -244,16 +257,31 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
   // ── Confirm edited transactions ────────────────────────────────
   async function handleConfirm(editedTxns, botMsgId) {
     try {
-      // Retrieve the original AI-parsed transactions for diff-based learning
       const originals = originalTxnsRef.current[botMsgId] || null
       const resp = await confirmTransactions(phone, editedTxns, botMsgId, originals)
-      // Transform the ConfirmCard message in-place to a SavedCard (no new message)
-      setMessages(prev => prev.map(m =>
-        m.id === botMsgId
-          ? { ...m, metadata: { confirmed_transactions: resp.confirmed_transactions } }
-          : m
-      ))
-      // Clean up stored originals for this message
+      setMessages(prev => {
+        const botIdx = prev.findIndex(m => m.id === botMsgId)
+        if (botIdx === -1) return prev
+
+        // Find the user image message immediately before this ConfirmCard
+        let imageIdx = -1
+        for (let i = botIdx - 1; i >= 0; i--) {
+          if (prev[i].direction === 'user' && prev[i].media_url) { imageIdx = i; break }
+        }
+
+        // Remove all messages between the image and the ConfirmCard (ack, person questions, etc.)
+        let cleaned = [...prev]
+        if (imageIdx !== -1 && botIdx - imageIdx > 1) {
+          cleaned.splice(imageIdx + 1, botIdx - imageIdx - 1)
+        }
+
+        // Transform ConfirmCard → SavedCard in the cleaned array
+        return cleaned.map(m =>
+          m.id === botMsgId
+            ? { ...m, metadata: { confirmed_transactions: resp.confirmed_transactions } }
+            : m
+        )
+      })
       delete originalTxnsRef.current[botMsgId]
       setQuickReplies([])
     } catch (e) {
@@ -384,11 +412,30 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
   }
 
   async function handleCancelConfirm(botMsgId) {
-    // Remove the ConfirmCard message from chat immediately
-    setMessages(prev => prev.filter(m => m.id !== botMsgId))
-    // Clean up stored originals
+    const cancelText = EXPENSE_CANCEL_MSG[language] || EXPENSE_CANCEL_MSG.hinglish
+    setMessages(prev => {
+      const botIdx = prev.findIndex(m => m.id === botMsgId)
+      if (botIdx === -1) return prev
+
+      // Find user image before ConfirmCard
+      let imageIdx = -1
+      for (let i = botIdx - 1; i >= 0; i--) {
+        if (prev[i].direction === 'user' && prev[i].media_url) { imageIdx = i; break }
+      }
+
+      const cancelMsg = {
+        id: Date.now(), direction: 'bot', body: cancelText,
+        created_at: new Date().toISOString()
+      }
+
+      if (imageIdx !== -1) {
+        // Keep everything up to and including the image, then add cancel msg
+        return [...prev.slice(0, imageIdx + 1), cancelMsg, ...prev.slice(botIdx + 1)]
+      }
+      // No image found — just replace ConfirmCard with cancel msg
+      return [...prev.filter(m => m.id !== botMsgId), cancelMsg]
+    })
     delete originalTxnsRef.current[botMsgId]
-    // Tell server to mark dismissed so it doesn't reappear on reload
     dismissMessage(phone, botMsgId).catch(() => {})
   }
 
@@ -479,7 +526,6 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
                 onConfirm={isLastConfirm ? (txns) => handleConfirm(txns, msg.id) : null}
                 onCancel={isLastConfirm ? () => handleCancelConfirm(msg.id) : null}
                 onPendingEdit={isLastConfirm ? (txns) => handlePendingEdit(msg.id, txns) : null}
-                onOpenLedger={() => setShowLedger(true)}
               />
             )
           })
@@ -496,7 +542,6 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
       <InputBar
         onSend={handleSend}
         onImage={handleImage}
-        onLedger={() => setShowLedger(true)}
         disabled={sending}
       />
 
