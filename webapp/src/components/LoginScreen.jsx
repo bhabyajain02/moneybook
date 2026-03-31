@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { login, checkPhone } from '../api.js'
+import { t } from '../translations.js'
 
 const LANGUAGES = [
   { key: 'english',  label: 'English' },
@@ -16,7 +17,7 @@ const LANGUAGES = [
 
 const LS_LANG = 'moneybook_lang'
 
-export default function LoginScreen({ onLogin }) {
+export default function LoginScreen({ onLogin, initialLanguage }) {
   const [phone, setPhone]         = useState('')
   const [storeName, setStoreName] = useState('')
   const [loading, setLoading]     = useState(false)
@@ -25,7 +26,7 @@ export default function LoginScreen({ onLogin }) {
   const [existingStore, setExistingStore] = useState(null)  // null | { name, onboarding_state }
   const [isNewUser, setIsNewUser] = useState(false)
   const [lang, setLang]           = useState(
-    () => localStorage.getItem(LS_LANG) || 'hinglish'
+    () => initialLanguage || localStorage.getItem(LS_LANG) || 'hinglish'
   )
   const checkTimeoutRef = useRef(null)
 
@@ -74,7 +75,7 @@ export default function LoginScreen({ onLogin }) {
     e.preventDefault()
     const digits = phone.replace(/\D/g, '')
     if (digits.length !== 10) {
-      setError('10 digit ka mobile number daalen')
+      setError(t('phone_error', lang))
       return
     }
     setLoading(true)
@@ -83,7 +84,7 @@ export default function LoginScreen({ onLogin }) {
       const data = await login(digits, storeName)
       onLogin(digits, data, lang)
     } catch (err) {
-      setError(err.message || 'Kuch gadbad ho gayi, dobara try karein')
+      setError(err.message || t('server_error', lang))
     } finally {
       setLoading(false)
     }
@@ -96,7 +97,7 @@ export default function LoginScreen({ onLogin }) {
       <div className="login-logo">📒</div>
       <h1 className="login-title">MoneyBook</h1>
       <p className="login-subtitle">
-        Aapka digital khata — WhatsApp ki tarah simple
+        {t('subtitle', lang)}
       </p>
 
       <form className="login-input-group" onSubmit={handleSubmit}>
@@ -121,7 +122,7 @@ export default function LoginScreen({ onLogin }) {
         {/* Returning user: welcome back */}
         {digits.length === 10 && !checking && existingStore && (
           <p className="login-welcome-back">
-            👋 Welcome back, <strong>{existingStore.name}</strong>!
+            👋 {t('welcome_back', lang)}, <strong>{existingStore.name}</strong>!
           </p>
         )}
 
@@ -131,7 +132,7 @@ export default function LoginScreen({ onLogin }) {
             <input
               className="store-name-input"
               type="text"
-              placeholder="Aapke store ka naam (e.g. Sharma General Store)"
+              placeholder={t('store_placeholder', lang)}
               value={storeName}
               onChange={e => setStoreName(e.target.value)}
               maxLength={60}
@@ -141,7 +142,7 @@ export default function LoginScreen({ onLogin }) {
 
         {/* Language selector */}
         <div className="lang-section">
-          <p className="lang-label">Bhasha / Language</p>
+          <p className="lang-label">{t('lang_label', lang)}</p>
           <div className="lang-grid">
             {LANGUAGES.map(l => (
               <button
@@ -163,11 +164,11 @@ export default function LoginScreen({ onLogin }) {
           type="submit"
           disabled={digits.length !== 10 || loading || checking}
         >
-          {loading ? 'Connecting...' : checking ? 'Checking...' : 'Start ▶'}
+          {loading ? t('connecting', lang) : checking ? t('checking', lang) : t('start', lang)}
         </button>
       </form>
 
-      <p className="login-note">Koi password nahi — sirf number daalen aur shuru karein</p>
+      <p className="login-note">{t('note', lang)}</p>
     </div>
   )
 }

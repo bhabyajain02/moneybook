@@ -790,6 +790,27 @@ def get_top_receivers(store_id: int, start: str, end: str, limit: int = 5) -> li
         return [dict(r) for r in rows] if rows else []
 
 
+def get_others_summary(store_id: int, start: str, end: str) -> list:
+    """Returns transactions for people classified as 'other', grouped by person.
+    Shows {person_name, total, count, types} so the analytics Others section
+    can list each person with their transaction totals."""
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT
+                t.person_name,
+                SUM(t.amount) AS total,
+                COUNT(*) AS count,
+                GROUP_CONCAT(DISTINCT t.type) AS types
+            FROM transactions t
+            WHERE t.store_id = ? AND t.date BETWEEN ? AND ?
+              AND t.person_category = 'other'
+              AND t.person_name IS NOT NULL
+            GROUP BY t.person_name
+            ORDER BY total DESC
+        """, (store_id, start, end)).fetchall()
+        return [dict(r) for r in rows] if rows else []
+
+
 # ─────────────────────────────────────────────
 # Dues & Staff helpers
 # ─────────────────────────────────────────────
@@ -1026,3 +1047,11 @@ def get_web_messages(store_id: int, after_id: int = 0, limit: int = 80) -> list:
             d['metadata'] = None
         result.append(d)
     return result
+
+
+def clear_store_data(store_id: int) -> None:
+    """Delete all web chat messages AND transactions for a store, and reset bot state."""
+    with get_db() as conn:
+        conn.execute("DELETE FROM web_messages WHERE store_id = ?", (store_id,))
+        conn.execute("DELETE FROM transactions WHERE store_id = ?", (store_id,))
+        conn.execute("UPDATE stores SET bot_state = '{}' WHERE id = ?", (store_id,))

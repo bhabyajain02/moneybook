@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { fetchDues, fetchStaff, updateDuesContact, fetchPersonDuesHistory } from '../api.js'
+import { t } from '../translations.js'
 
 function fmtRs(val) {
   const n = parseFloat(val) || 0
@@ -18,9 +19,9 @@ function daysColor(days) {
 }
 
 // ── Full ledger for one customer ────────────────────────────────
-function DuesCard({ due, phone, onContactSaved }) {
+function DuesCard({ due, phone, language, onContactSaved }) {
   const [expanded,  setExpanded]  = useState(false)
-  const [history,   setHistory]   = useState(null)   // null = not loaded
+  const [history,   setHistory]   = useState(null)
   const [loadingH,  setLoadingH]  = useState(false)
   const [editing,   setEditing]   = useState(false)
   const [contact,   setContact]   = useState('')
@@ -62,25 +63,30 @@ function DuesCard({ due, phone, onContactSaved }) {
 
   return (
     <div className="dues-card">
-      {/* Card header — always visible, click to expand */}
       <div className="dues-card-top" onClick={toggleExpand} style={{ cursor: 'pointer' }}>
         <div>
           <div className="dues-name">{due.person_name}</div>
           {due.phone
             ? <a href={`tel:${due.phone}`} className="dues-phone" onClick={e => e.stopPropagation()}>📞 {due.phone}</a>
-            : <span className="dues-phone" style={{ color: '#bbb' }}>No contact</span>
+            : <span className="dues-phone" style={{ color: '#bbb' }}>{t('no_contact', language)}</span>
           }
         </div>
         <div className="dues-right">
           <div className="dues-amount">{fmtRs(due.balance)}</div>
-          <div className="dues-days" style={{ color }}>{days > 0 ? `${days} days ago` : 'Today'}</div>
-          <span style={{ fontSize: 11, color: '#aaa', marginTop: 2 }}>{expanded ? '▲ Hide' : '▼ Ledger'}</span>
+          <div className="dues-days" style={{ color }}>
+            {days > 0 ? `${days} ${t('days_ago', language)}` : t('today_label', language)}
+          </div>
+          <span style={{ fontSize: 11, color: '#aaa', marginTop: 2 }}>
+            {expanded ? t('hide_label', language) : t('ledger_label', language)}
+          </span>
         </div>
       </div>
 
       {/* Add contact */}
       {!due.phone && !editing && !expanded && (
-        <button className="add-contact-btn" onClick={() => setEditing(true)}>📞 Add Contact</button>
+        <button className="add-contact-btn" onClick={() => setEditing(true)}>
+          {t('add_contact', language)}
+        </button>
       )}
       {editing && (
         <form className="contact-form" onSubmit={handleSaveContact}>
@@ -96,9 +102,9 @@ function DuesCard({ due, phone, onContactSaved }) {
       {expanded && (
         <div className="dues-ledger">
           {loadingH ? (
-            <p className="dues-ledger-loading">Loading...</p>
+            <p className="dues-ledger-loading">{t('loading', language)}</p>
           ) : txns.length === 0 ? (
-            <p className="dues-ledger-empty">Koi history nahi mili</p>
+            <p className="dues-ledger-empty">{t('no_history', language)}</p>
           ) : (
             <table className="dues-ledger-table">
               <thead>
@@ -106,32 +112,32 @@ function DuesCard({ due, phone, onContactSaved }) {
                   <th>Date</th>
                   <th>Description</th>
                   <th className="dl-num">Amount</th>
-                  <th className="dl-num">Balance</th>
+                  <th className="dl-num">{t('outstanding', language)}</th>
                 </tr>
               </thead>
               <tbody>
-                {txns.map((t, i) => {
-                  const isGiven = t.type === 'given'
+                {txns.map((txn, i) => {
+                  const isGiven = txn.type === 'given'
                   return (
                     <tr key={i} className={isGiven ? 'dl-row-given' : 'dl-row-received'}>
-                      <td className="dl-date">{fmtDate(t.date)}</td>
+                      <td className="dl-date">{fmtDate(txn.date)}</td>
                       <td className="dl-desc">
                         <span className={`dl-badge ${isGiven ? 'dl-badge-given' : 'dl-badge-rcvd'}`}>
-                          {isGiven ? '↑ Diya' : '↓ Liya'}
+                          {isGiven ? t('given_badge', language) : t('received_badge', language)}
                         </span>
-                        {t.description || (isGiven ? 'Udhaar diya' : 'Wapas liya')}
+                        {txn.description || (isGiven ? t('udhaar_given', language) : t('udhaar_received', language))}
                       </td>
                       <td className={`dl-num dl-amt ${isGiven ? 'dl-amt-given' : 'dl-amt-rcvd'}`}>
-                        {isGiven ? '+' : '−'}{fmtRs(t.amount)}
+                        {isGiven ? '+' : '−'}{fmtRs(txn.amount)}
                       </td>
-                      <td className="dl-num dl-bal">{fmtRs(t.running_bal)}</td>
+                      <td className="dl-num dl-bal">{fmtRs(txn.running_bal)}</td>
                     </tr>
                   )
                 })}
               </tbody>
               <tfoot>
                 <tr className="dl-foot">
-                  <td colSpan={3} style={{ textAlign: 'right', fontWeight: 600 }}>Outstanding:</td>
+                  <td colSpan={3} style={{ textAlign: 'right', fontWeight: 600 }}>{t('outstanding', language)}:</td>
                   <td className="dl-num" style={{ fontWeight: 700, color: '#E53935' }}>{fmtRs(due.balance)}</td>
                 </tr>
               </tfoot>
@@ -141,7 +147,7 @@ function DuesCard({ due, phone, onContactSaved }) {
           {/* Add contact from within ledger */}
           {!due.phone && !editing && (
             <button className="add-contact-btn" style={{ marginTop: 8 }} onClick={() => setEditing(true)}>
-              📞 Add Contact
+              {t('add_contact', language)}
             </button>
           )}
         </div>
@@ -151,8 +157,8 @@ function DuesCard({ due, phone, onContactSaved }) {
 }
 
 
-// ── Staff card (unchanged structure) ────────────────────────────
-function StaffCard({ member }) {
+// ── Staff card ────────────────────────────────────────────────
+function StaffCard({ member, language }) {
   const [expanded, setExpanded] = useState(false)
 
   return (
@@ -161,12 +167,12 @@ function StaffCard({ member }) {
         <div className="staff-card-left">
           <div className="staff-name">👷 {member.name}</div>
           <div className="staff-meta">
-            This month: <strong>{fmtRs(member.total_this_month)}</strong>
+            {t('this_month', language)}: <strong>{fmtRs(member.total_this_month)}</strong>
           </div>
         </div>
         <div className="staff-right">
           <div className="staff-total">{fmtRs(member.total_all_time)}</div>
-          <div className="staff-sublabel">total paid</div>
+          <div className="staff-sublabel">{t('total_paid', language)}</div>
           <span className="expand-icon">{expanded ? '▲' : '▼'}</span>
         </div>
       </div>
@@ -175,17 +181,17 @@ function StaffCard({ member }) {
         <div className="staff-expanded">
           {member.recent_payments && member.recent_payments.length > 0 ? (
             <div className="staff-section">
-              <div className="staff-section-title">💸 Payments</div>
+              <div className="staff-section-title">{t('payments_label', language)}</div>
               {member.recent_payments.map((p, i) => (
                 <div key={i} className="staff-payment-row">
                   <span className="staff-pay-date">{p.date}</span>
-                  <span className="staff-pay-desc">{p.description || 'Salary'}</span>
+                  <span className="staff-pay-desc">{p.description || t('salary_label', language)}</span>
                   <span className="staff-pay-amt">{fmtRs(p.amount)}</span>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="staff-empty">Koi payment nahi mili</p>
+            <p className="staff-empty">{t('no_payments', language)}</p>
           )}
         </div>
       )}
@@ -195,7 +201,7 @@ function StaffCard({ member }) {
 
 
 // ── Main DuesPage ────────────────────────────────────────────────
-export default function DuesPage({ phone, storeName }) {
+export default function DuesPage({ phone, storeName, language = 'hinglish' }) {
   const [tab,     setTab]     = useState('dues')
   const [dues,    setDues]    = useState([])
   const [staff,   setStaff]   = useState([])
@@ -237,35 +243,35 @@ export default function DuesPage({ phone, storeName }) {
         <div className="header-avatar">👥</div>
         <div className="header-info">
           <div className="header-name">{storeName || 'Dues & Staff'}</div>
-          <div className="header-status">Track udhaar and staff</div>
+          <div className="header-status">{t('dues_status', language)}</div>
         </div>
       </div>
 
       <div className="dues-tabs">
         <button className={`dues-tab ${tab === 'dues' ? 'active' : ''}`} onClick={() => setTab('dues')}>
-          👥 Udhaar / Dues
+          {t('tab_dues', language)}
         </button>
         <button className={`dues-tab ${tab === 'staff' ? 'active' : ''}`} onClick={() => setTab('staff')}>
-          👷 Staff
+          {t('tab_staff', language)}
         </button>
       </div>
 
       <div className="dues-body">
-        {loading && <div className="dues-loading">Loading...</div>}
+        {loading && <div className="dues-loading">{t('loading', language)}</div>}
         {error   && <div className="dues-error">⚠️ {error}</div>}
 
         {!loading && !error && tab === 'dues' && (
           <>
             {dues.length === 0 ? (
-              <div className="dues-empty">✅ Koi udhaar baaki nahi!</div>
+              <div className="dues-empty">{t('no_dues', language)}</div>
             ) : (
               <>
                 <div className="dues-total-banner">
-                  <span>Total Outstanding</span>
+                  <span>{t('total_outstanding', language)}</span>
                   <span style={{ fontWeight: 700, color: '#E53935' }}>{fmtRs(totalDues)}</span>
                 </div>
                 {dues.map(d => (
-                  <DuesCard key={d.person_name} due={d} phone={phone} onContactSaved={handleContactSaved} />
+                  <DuesCard key={d.person_name} due={d} phone={phone} language={language} onContactSaved={handleContactSaved} />
                 ))}
               </>
             )}
@@ -275,9 +281,9 @@ export default function DuesPage({ phone, storeName }) {
         {!loading && !error && tab === 'staff' && (
           <>
             {staff.length === 0 ? (
-              <div className="dues-empty">Koi staff member nahi</div>
+              <div className="dues-empty">{t('no_staff', language)}</div>
             ) : (
-              staff.map(s => <StaffCard key={s.name} member={s} />)
+              staff.map(s => <StaffCard key={s.name} member={s} language={language} />)
             )}
           </>
         )}
