@@ -23,6 +23,27 @@ const LANGUAGES = [
 
 const POLL_INTERVAL = 2500   // ms
 
+// Lightweight tag inference from description when AI didn't assign one
+function _inferTag(desc) {
+  const d = (desc || '').toLowerCase()
+  if (/\b(salary|staff|wages?|labour)\b/.test(d)) return 'staff_expense'
+  if (/\b(rent|kiraya)\b/.test(d)) return 'rent'
+  if (/\b(electric|bijli|power)\b/.test(d)) return 'electricity'
+  if (/\b(petrol|diesel|fuel|gas)\b/.test(d)) return 'petrol'
+  if (/\b(food|khana|lunch|dinner|breakfast|refreshment|chai|tea|coffee)\b/.test(d)) return 'refreshment'
+  if (/\b(transport|auto|rikshaw|taxi|bus|freight|courier)\b/.test(d)) return 'transport'
+  if (/\b(repair|maintenance|service)\b/.test(d)) return 'repair'
+  if (/\b(phone|mobile|telephone|recharge)\b/.test(d)) return 'telephone'
+  if (/\b(water|pani)\b/.test(d)) return 'water'
+  if (/\b(insurance|bima)\b/.test(d)) return 'insurance'
+  if (/\b(packaging|packing)\b/.test(d)) return 'packaging'
+  if (/\b(cleaning|safai|sweep)\b/.test(d)) return 'cleaning'
+  if (/\b(discount|cd\b|cash discount)\b/.test(d)) return 'cash_discount'
+  if (/\b(purchase|khareed|buy|bought|saman)\b/.test(d)) return 'purchase'
+  if (/\b(office|stationary|supply|supplies)\b/.test(d)) return 'office_supplies'
+  return 'store_expense'  // generic fallback
+}
+
 /* Derive quick-reply chips from the last bot message body.
    Backend also returns quick_replies[] — we use whichever is latest. */
 function deriveChips(quickReplies) {
@@ -229,10 +250,15 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
       const resp = await sendImage(phone, file, language)
       setUploadPct(100)
 
-      // Swap temp ID → real DB ID so polling dedup skips this message
+      // Swap temp ID → real DB ID and replace blob URL with server URL
       const realId = resp?.user_message_id
       if (realId) {
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...m, id: realId } : m))
+        const serverUrl = resp?.media_url || null
+        setMessages(prev => prev.map(m =>
+          m.id === tempId
+            ? { ...m, id: realId, ...(serverUrl ? { media_url: serverUrl } : {}) }
+            : m
+        ))
         lastIdRef.current = Math.max(lastIdRef.current, realId)
       }
       setProcessing(true)
@@ -395,12 +421,26 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
       if (!t.person_name) return t
       const c = classifications[t.person_name]
       if (!c) return t
-      return {
+      const updated = {
         ...t,
         person_category: c.category,
         person_name: c.category === 'staff' && c.staffName ? c.staffName : t.person_name,
         needs_tracking: false,
       }
+      // Store expense → force type to expense with a tag
+      if (c.category === 'store_expense') {
+        updated.type = 'expense'
+        // Ensure a tag exists — use existing tag or derive from description
+        if (!updated.tag) {
+          updated.tag = _inferTag(updated.description || t.person_name || '')
+        }
+      }
+      // Staff on OUT side → expense with staff_expense tag
+      if (c.category === 'staff' && (t.type === 'expense' || t.type === 'udhaar_given')) {
+        updated.type = 'expense'
+        updated.tag = 'staff_expense'
+      }
+      return updated
     })
 
     // Refresh staff options after classification

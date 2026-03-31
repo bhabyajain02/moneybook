@@ -121,23 +121,35 @@ closing_balance  → end-of-day cash carried forward
 sale             → revenue from selling goods
 receipt          → money received from a person (advance, collection, repayment)
 expense          → outgoing payment that is NOT recoverable (bills, salary, rent, purchases)
-udhaar_given     → credit given to a customer (they owe the store)
-udhaar_received  → customer repaid their credit
+dues_given       → credit given to a customer (they owe the store)
+dues_received    → customer repaid their credit
+other            → miscellaneous entry that doesn't fit other categories (e.g. cash payment, UPI collection, bank transfer)
 bank_deposit     → cash moved to a bank account
 cash_in_hand     → physical cash counted at day end
 upi_in_hand      → UPI / Paytm / card settlement total at day end
 
-━━ UDHAAR vs EXPENSE — KEY DISTINCTION ━━
-udhaar_given: money given to someone expected to return it later (credit/advance/loan)
-  → "Raju ne 500 liya", "X ko advance diya", "X ka dues diya", "udhaar diya"
-udhaar_received: someone returning/paying back money owed to the store
-  → "Raju ne paise wapas diye", "X ne dues bhara"
+━━ DUES vs EXPENSE — KEY DISTINCTION ━━
+dues_given: money given to someone expected to return it later (credit/advance/loan)
+  → ONLY when text EXPLICITLY says: "udhaar", "udhar", "dues", "advance diya", "loan", "credit diya", "liya" (took)
+  → Examples: "Raju ne 500 liya", "X ko advance diya", "X ka dues diya", "udhaar diya"
+dues_received: someone returning/paying back money owed to the store
+  → ONLY when text EXPLICITLY says: "wapas", "return", "dues bhara", "repaid", "jama"
+  → Examples: "Raju ne paise wapas diye", "X ne dues bhara"
 expense: money permanently spent on goods/services (NOT recoverable)
   → "bijli bill", "salary", "rent", "saman kharida", "freight"
-When description says "dues" and money goes OUT to a named person → udhaar_given (they owe it back)
+
+⚠️ CRITICAL RULE — DO NOT ASSUME DUES:
+When you see a person name with an amount (e.g. "Ali Tailor 500") and there is NO explicit
+keyword indicating credit/loan/dues — do NOT assume dues_given or dues_received.
+Instead, classify based on context:
+  - If it looks like payment for a service → expense (e.g. "Ali Tailor 500" = tailoring expense)
+  - If truly ambiguous → use "other" type and set needs_tracking=true so the user can classify
+  - NEVER invent "Dues given to X" in the description unless the original text actually says dues/udhaar/advance
 
 ━━ TAG ━━
 For expense entries write a short lowercase English label using your own world knowledge.
+{existing_tags_hint}
+Maximum 15 distinct tags per store — prefer reusing existing tags over creating new ones.
 Be as specific as the context allows. Never write "other" — always describe what you see.
 Non-expense types (sale, receipt, opening_balance, etc.) → tag: null
 
@@ -157,19 +169,13 @@ Set person_name=null for anything that is NOT a real human name:
 If the word could appear in a dictionary as a common noun/verb/adjective — it is NOT a person_name.
 
 ━━ NEEDS_TRACKING ━━
-Set needs_tracking=true ONLY when person_name is a real human whose ongoing
-business relationship should be tracked (staff on payroll, customer who owes money,
-regular supplier).
-Set needs_tracking=false when:
-- person_name is a payment descriptor, method name, or transaction type
-- The transaction is a store operational expense where the person is just a recipient
-  (cash discount, refund, delivery charge, packaging cost, misc store expense)
-- The person received a one-time payment that doesn't indicate an ongoing relationship
-Key insight: "Cash discount given to X" means X is a customer getting a discount —
-the store knows X is a customer from context. No need to track/ask.
-"Bill payment to X" for goods/services is a routine expense — no tracking needed.
-Only set needs_tracking=true when knowing the person's category (staff/customer/supplier)
-would change how the transaction is recorded or reported.
+Simple rule: if person_name is a real human name → needs_tracking=true. ALWAYS.
+The system will ask the user to classify the person (Staff/Customer/Store Expense/Other).
+Do NOT try to guess the relationship yourself — let the user decide.
+
+Set needs_tracking=false ONLY when:
+- person_name is null (no person involved)
+- person_name is a generic word, not a real human name
 
 ━━ VERIFY YOUR WORK ━━
 If any total or balance figure is written on the page, check that your
@@ -246,24 +252,34 @@ MESSAGE: "{message}"
 {store_context}
 
 ━━ TRANSACTION TYPES ━━
-sale, expense, udhaar_given, udhaar_received, bank_deposit,
-opening_balance, closing_balance, cash_in_hand, upi_in_hand, receipt
+sale, expense, dues_given, dues_received, bank_deposit,
+opening_balance, closing_balance, cash_in_hand, upi_in_hand, receipt, other
 
 ━━ IMPORTANT: CD = CASH DISCOUNT (not cash drawn) ━━
 "CD A. Tiwari 695" → expense, tag: cash_discount, person: A. Tiwari, amount: 695
 
-━━ UDHAAR vs EXPENSE — KEY DISTINCTION ━━
-udhaar_given: money given to someone expected to return it later (credit/advance/loan)
-  → "Raju ne 500 liya", "X ko advance diya", "X ka dues diya", "udhaar diya"
-udhaar_received: someone returning/paying back money owed to the store
-  → "Raju ne paise wapas diye", "X ne dues bhara"
+━━ DUES vs EXPENSE — KEY DISTINCTION ━━
+dues_given: money given to someone expected to return it later (credit/advance/loan)
+  → ONLY when text EXPLICITLY says: "udhaar", "udhar", "dues", "advance diya", "loan", "credit diya", "liya" (took)
+  → Examples: "Raju ne 500 liya", "X ko advance diya", "X ka dues diya", "udhaar diya"
+dues_received: someone returning/paying back money owed to the store
+  → ONLY when text EXPLICITLY says: "wapas", "return", "dues bhara", "repaid", "jama"
+  → Examples: "Raju ne paise wapas diye", "X ne dues bhara"
 expense: money permanently spent on goods/services (NOT recoverable)
   → "bijli bill", "salary", "rent", "saman kharida", "freight"
-When description says "dues" and money goes OUT to a named person → udhaar_given (they owe it back)
+
+⚠️ CRITICAL RULE — DO NOT ASSUME DUES:
+When you see a person name with an amount (e.g. "Ali Tailor 500") and there is NO explicit
+keyword indicating credit/loan/dues — do NOT assume dues_given or dues_received.
+Instead, classify based on context:
+  - If it looks like payment for a service → expense (e.g. "Ali Tailor 500" = tailoring expense)
+  - If truly ambiguous → use "other" type and set needs_tracking=true so the user can classify
+  - NEVER invent "Dues given to X" in the description unless the original text actually says dues/udhaar/advance
 
 ━━ TAG — BE SPECIFIC, USE YOUR OWN WORDS ━━
 Write a short lowercase English label describing the nature of the expense.
-Do not pick from a fixed list — use your natural understanding.
+{existing_tags_hint}
+Maximum 15 distinct tags per store — prefer reusing existing tags over creating new ones.
 Good examples: petrol, staff_salary, tailoring, freight, refreshment, electricity, rent, repair
 Non-expense types → tag: null
 
@@ -283,20 +299,13 @@ Set person_name=null for anything that is NOT a real human name:
 If the word could appear in a dictionary as a common noun/verb/adjective — it is NOT a person_name.
 
 ━━ NEEDS_TRACKING ━━
-Set needs_tracking=true ONLY when person_name is a real human whose ongoing
-business relationship should be tracked (staff on payroll, customer who owes money,
-regular supplier).
-Set needs_tracking=false when:
-- person_name is a payment descriptor, method name, or transaction type
-- The transaction is a store operational expense where the person is just a recipient
-  (cash discount, refund, delivery charge, packaging cost, misc store expense)
-- The person received a one-time payment that doesn't indicate an ongoing relationship
-Key insight: "Cash discount given to X" means X is a customer getting a discount —
-the store knows X is a customer from context. No need to track/ask.
-"Bill payment to X" for goods/services is a routine expense — no tracking needed.
-Only set needs_tracking=true when knowing the person's category (staff/customer/supplier)
-would change how the transaction is recorded or reported.
-For udhaar_given and udhaar_received: needs_tracking=true if person_name looks like a real name.
+Simple rule: if person_name is a real human name → needs_tracking=true. ALWAYS.
+The system will ask the user to classify the person (Staff/Customer/Store Expense/Other).
+Do NOT try to guess the relationship yourself — let the user decide.
+
+Set needs_tracking=false ONLY when:
+- person_name is null (no person involved)
+- person_name is a generic word, not a real human name
 
 ━━ OUTPUT — ONLY valid JSON ━━
 {{
@@ -493,13 +502,28 @@ def _build_language_instruction(language: str) -> str:
     return _LANGUAGE_INSTRUCTION.format(language_name=lang_name)
 
 
-def parse_text_message(message: str, store_context: str = '', language: str = 'hinglish') -> dict:
+def _build_tags_hint(existing_tags: list = None) -> str:
+    """Build a prompt hint for reusing existing expense tags."""
+    if not existing_tags:
+        return ''
+    tags_str = ', '.join(existing_tags[:15])
+    return (
+        f"This store's existing expense categories: {tags_str}\n"
+        "Always prefer picking from this list when the expense fits. "
+        "Only create a new tag if none of these match."
+    )
+
+
+def parse_text_message(message: str, store_context: str = '', language: str = 'hinglish',
+                       existing_tags: list = None) -> dict:
     """Parse a free-form WhatsApp text message into transactions."""
+    tags_hint = _build_tags_hint(existing_tags)
     lang_instruction = _build_language_instruction(language)
     prompt = lang_instruction + '\n' + _TEXT_PROMPT.format(
         today=date.today().isoformat(),
         message=message,
         store_context=store_context,
+        existing_tags_hint=tags_hint,
     )
     try:
         text = _call_claude(_TEXT_MODEL, prompt)
@@ -513,13 +537,46 @@ def parse_text_message(message: str, store_context: str = '', language: str = 'h
                 'response_message': f'⚠️ Error: {str(e)[:80]}. Dobara try karein.'}
 
 
+def assign_expense_tags(descriptions: list, existing_tags: list = None) -> list:
+    """Use AI to assign expense category tags to a list of descriptions.
+    Returns a list of tags in the same order as descriptions.
+    Lightweight call — uses Haiku for speed/cost."""
+    if not descriptions:
+        return []
+    tags_hint = _build_tags_hint(existing_tags)
+    items = '\n'.join(f'{i+1}. {d}' for i, d in enumerate(descriptions))
+    prompt = f"""\
+Assign a short lowercase English expense category tag to each description below.
+{tags_hint}
+Maximum 15 distinct tags — prefer reusing existing ones over creating new.
+Good tags: petrol, staff_salary, electricity, rent, repair, transport, refreshment, purchase, cleaning, packaging, cash_discount, shop_supplies, dry_cleaning, office_supplies, water, telephone, insurance, home_expense, freight, tailoring
+
+Descriptions:
+{items}
+
+Return ONLY a JSON array of tags in the same order, e.g. ["rent", "transport", "purchase"]
+No explanation, no markdown — just the JSON array."""
+
+    try:
+        text = _call_claude(_TEXT_MODEL, prompt)
+        cleaned = _clean_json(text)
+        tags = json.loads(cleaned)
+        if isinstance(tags, list) and len(tags) == len(descriptions):
+            return [str(t).lower().strip() for t in tags]
+    except Exception:
+        pass
+    # Fallback: return generic tag
+    return ['store_expense'] * len(descriptions)
+
+
 def parse_image_message(image_url: str = None,
                         twilio_account_sid: str = None,
                         twilio_auth_token: str = None,
                         store_context: str = '',
                         local_path: str = None,
                         local_mime: str = None,
-                        language: str = 'hinglish') -> dict:
+                        language: str = 'hinglish',
+                        existing_tags: list = None) -> dict:
     """
     Single-pass image parsing with Extended Thinking.
 
@@ -551,11 +608,13 @@ def parse_image_message(image_url: str = None,
                 'response_message': f'Photo load error: {str(e)[:80]}'}
 
     try:
+        tags_hint = _build_tags_hint(existing_tags)
         lang_instruction = _build_language_instruction(language)
         prompt = lang_instruction + '\n' + _IMAGE_PARSE_PROMPT.format(
             today=date.today().isoformat(),
             store_context=store_context if store_context else
                          '(No prior corrections for this store yet)',
+            existing_tags_hint=tags_hint,
         )
         result_text = _call_claude(
             _VISION_MODEL, prompt,
@@ -715,11 +774,14 @@ def format_pending_confirmation(transactions: list, page_date: str = None) -> st
         'closing_balance':  ('🔒', 'Closing Bal'),
         'sale':             ('💰', 'Sale'),
         'receipt':          ('📨', 'Receipt'),
-        'udhaar_given':     ('📤', 'Udhaar Diya'),
-        'udhaar_received':  ('📥', 'Udhaar Mila'),
+        'dues_given':       ('📤', 'Dues Given'),
+        'dues_received':    ('📥', 'Dues Received'),
+        'udhaar_given':     ('📤', 'Dues Given'),
+        'udhaar_received':  ('📥', 'Dues Received'),
         'bank_deposit':     ('🏦', 'Bank Deposit'),
         'cash_in_hand':     ('💵', 'Cash'),
         'upi_in_hand':      ('📱', 'UPI'),
+        'other':            ('📋', 'Other'),
     }
 
     for i, t in enumerate(transactions, 1):
@@ -763,11 +825,11 @@ def format_daily_summary(data: dict, store_name: str = 'Store') -> str:
 
     opening  = a('opening_balance')
     sales    = a('sale')
-    ud_r     = a('udhaar_received')
+    ud_r     = a('udhaar_received') + a('dues_received')
     receipts = a('receipt')
     expenses = a('expense')
     bank     = a('bank_deposit')
-    ud_g     = a('udhaar_given')
+    ud_g     = a('udhaar_given') + a('dues_given')
     cash     = a('cash_in_hand')
     upi      = a('upi_in_hand')
 
@@ -779,7 +841,7 @@ def format_daily_summary(data: dict, store_name: str = 'Store') -> str:
         if opening:  lines.append(f'  🔓 Opening Balance:  ₹{opening:,.0f}')
         if sales:    lines.append(f'  💰 Bikri / Sale:     ₹{sales:,.0f}')
         if receipts: lines.append(f'  📨 Receipts:         ₹{receipts:,.0f}')
-        if ud_r:     lines.append(f'  📥 Udhaar Received:  ₹{ud_r:,.0f}')
+        if ud_r:     lines.append(f'  📥 Dues Received:    ₹{ud_r:,.0f}')
         total_in = opening + sales + ud_r + receipts
         lines.append(f'  {"─"*21}')
         lines.append(f'  *Total IN:           ₹{total_in:,.0f}*')
@@ -795,7 +857,7 @@ def format_daily_summary(data: dict, store_name: str = 'Store') -> str:
     if has_closing:
         lines.append('\n*🏦 BAAKI (Closing / Settled)*')
         if bank:  lines.append(f'  🏦 Bank Deposit:     ₹{bank:,.0f}')
-        if ud_g:  lines.append(f'  📤 Udhaar Diya:      ₹{ud_g:,.0f}')
+        if ud_g:  lines.append(f'  📤 Dues Given:       ₹{ud_g:,.0f}')
         if cash:  lines.append(f'  💵 Cash in Hand:     ₹{cash:,.0f}')
         if upi:   lines.append(f'  📱 UPI in Hand:      ₹{upi:,.0f}')
 
@@ -830,8 +892,8 @@ def format_period_summary(data: dict, store_name: str = 'Store') -> str:
     sales    = g('sale')
     expenses = g('expense')
     bank     = g('bank_deposit')
-    ud_g     = g('udhaar_given')
-    ud_r     = g('udhaar_received')
+    ud_g     = g('udhaar_given') + g('dues_given')
+    ud_r     = g('udhaar_received') + g('dues_received')
     net      = sales - expenses
 
     lines = [
@@ -841,7 +903,7 @@ def format_period_summary(data: dict, store_name: str = 'Store') -> str:
         '*📥 Income*',
         f'  💰 Total Sales:     ₹{sales:,.0f}',
     ]
-    if ud_r: lines.append(f'  📥 Udhaar Received: ₹{ud_r:,.0f}')
+    if ud_r: lines.append(f'  📥 Dues Received:   ₹{ud_r:,.0f}')
 
     if expenses > 0:
         lines += ['', '*📤 Kharcha by Category*']
@@ -852,7 +914,7 @@ def format_period_summary(data: dict, store_name: str = 'Store') -> str:
     if bank or ud_g:
         lines += ['', '*🏦 Other Outflows*']
         if bank:  lines.append(f'  🏦 Bank Deposits:    ₹{bank:,.0f}')
-        if ud_g:  lines.append(f'  📤 Udhaar Diya:      ₹{ud_g:,.0f}')
+        if ud_g:  lines.append(f'  📤 Dues Given:       ₹{ud_g:,.0f}')
 
     lines += ['', '─' * 22,
               f'{"📈" if net >= 0 else "📉"} *Net (Sales − Kharcha): ₹{net:,.0f}*']
@@ -871,7 +933,7 @@ def format_udhaar_list(udhaar_list: list) -> str:
     if not udhaar_list:
         return '✅ Koi udhaar nahi! Sab clear hai.'
     total = sum(u['balance'] for u in udhaar_list)
-    lines = ['📋 *Outstanding Udhaar:*\n']
+    lines = ['📋 *Outstanding Dues:*\n']
     for u in udhaar_list:
         lines.append(f'• {u["person_name"]}: ₹{u["balance"]:,.0f}')
     lines.append(f'\n💰 *Total: ₹{total:,.0f}*')

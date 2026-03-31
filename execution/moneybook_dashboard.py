@@ -194,19 +194,19 @@ st.divider()
 # ─────────────────────────────────────────────
 st.subheader('🌊 Cash Flow Overview')
 
-cash_in  = total_sales + sum_type(txns_df, 'udhaar_received') + sum_type(txns_df, 'opening_balance')
-cash_out = total_expenses + sum_type(txns_df, 'udhaar_given') + sum_type(txns_df, 'bank_deposit')
+cash_in  = total_sales + sum_type(txns_df, 'udhaar_received') + sum_type(txns_df, 'dues_received') + sum_type(txns_df, 'opening_balance')
+cash_out = total_expenses + sum_type(txns_df, 'udhaar_given') + sum_type(txns_df, 'dues_given') + sum_type(txns_df, 'bank_deposit')
 
 fig_wf = go.Figure(go.Waterfall(
     name='Cash Flow',
     orientation='v',
     measure=['relative', 'relative', 'relative', 'relative', 'total'],
-    x=['Sales', 'Udhaar Recv', 'Expenses', 'Udhaar Given', 'Net'],
+    x=['Sales', 'Dues Recv', 'Expenses', 'Dues Given', 'Net'],
     y=[
         total_sales,
-        sum_type(txns_df, 'udhaar_received'),
+        sum_type(txns_df, 'udhaar_received') + sum_type(txns_df, 'dues_received'),
         -total_expenses,
-        -sum_type(txns_df, 'udhaar_given'),
+        -(sum_type(txns_df, 'udhaar_given') + sum_type(txns_df, 'dues_given')),
         0,
     ],
     connector={'line': {'color': 'rgb(63, 63, 63)'}},

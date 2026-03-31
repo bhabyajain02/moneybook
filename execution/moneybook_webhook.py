@@ -49,6 +49,7 @@ from moneybook_db import (
     save_web_message, get_web_messages, clear_store_data,
     get_daily_trend, get_staff_payments, get_payment_mode_split,
     get_top_receivers, get_others_summary, get_dues_with_detail, get_staff_detail,
+    get_store_expense_tags,
     update_udhaar_contact,
     update_message_metadata, delete_transaction,
     get_person_udhaar_history,
@@ -505,8 +506,9 @@ def process_image_and_reply(from_number: str, media_url: str, body: str):
         sid   = store['id']
 
         ctx           = build_store_context(sid)   # per-store learning context
+        etags         = [t['tag'] for t in get_store_expense_tags(sid, limit=15)]
         parsed        = parse_image_message(media_url, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
-                                            store_context=ctx)
+                                            store_context=ctx, existing_tags=etags)
         txns          = [t for t in parsed.get('transactions', []) if t.get('amount', 0) > 0]
         persons_found = parsed.get('persons_found', [])
         page_date     = parsed.get('date')
@@ -836,7 +838,8 @@ def _process_web_message(phone: str, body: str, language: str = 'hinglish') -> d
 
     # ── Idle: parse text transaction ─────────────────────
     ctx    = build_store_context(sid)
-    parsed = parse_text_message(body, store_context=ctx, language=language)
+    etags  = [t['tag'] for t in get_store_expense_tags(sid, limit=15)]
+    parsed = parse_text_message(body, store_context=ctx, language=language, existing_tags=etags)
     txns   = [t for t in parsed.get('transactions', []) if t.get('amount', 0) > 0]
     persons_found = parsed.get('persons_found', [])
     page_date = parsed.get('date')
@@ -985,6 +988,7 @@ async def api_send_image(
 
     return {
         'user_message_id': user_msg_id,
+        'media_url': media_url,
         'processing': True,
     }
 
@@ -994,12 +998,14 @@ def _process_web_image(phone: str, store_id: int, filepath: str,
     """Background: parse a locally-saved image and push reply to web_messages."""
     try:
         ctx    = build_store_context(store_id)
+        etags  = [t['tag'] for t in get_store_expense_tags(store_id, limit=15)]
         parsed = parse_image_message(
             image_url=None,
             local_path=filepath,
             local_mime=mime_type,
             store_context=ctx,
             language=language,
+            existing_tags=etags,
         )
         txns          = [t for t in parsed.get('transactions', []) if t.get('amount', 0) > 0]
         persons_found = parsed.get('persons_found', [])
@@ -1086,9 +1092,9 @@ async def api_get_profile(phone: str):
 
 class ProfileUpdate(BaseModel):
     phone:    str
-    name:     str | None = None
-    language: str | None = None
-    segment:  str | None = None
+    name:     Optional[str] = None
+    language: Optional[str] = None
+    segment:  Optional[str] = None
 
 
 @app.put('/api/profile')
@@ -1115,11 +1121,62 @@ async def api_clear_chat(phone: str):
     return {'ok': True}
 
 
+import re as _re
+
+def _infer_expense_tag(desc: str, existing_tags: list) -> str:
+    """Lightweight keyword-based tag inference for expenses missing a tag."""
+    d = (desc or '').lower()
+    # Check if description matches any existing tag keyword
+    for tag in existing_tags:
+        if tag.replace('_', ' ') in d or tag in d:
+            return tag
+    # Keyword rules
+    _RULES = [
+        (r'\b(salary|staff|wages?|labour)\b', 'staff_expense'),
+        (r'\b(rent|kiraya)\b', 'rent'),
+        (r'\b(electric|bijli|power)\b', 'electricity'),
+        (r'\b(petrol|diesel|fuel|gas)\b', 'petrol'),
+        (r'\b(food|khana|lunch|dinner|breakfast|refreshment|chai|tea|coffee)\b', 'refreshment'),
+        (r'\b(transport|auto|rikshaw|taxi|bus|freight|courier)\b', 'transport'),
+        (r'\b(repair|maintenance|service)\b', 'repair'),
+        (r'\b(phone|mobile|telephone|recharge)\b', 'telephone'),
+        (r'\b(water|pani)\b', 'water'),
+        (r'\b(insurance|bima)\b', 'insurance'),
+        (r'\b(packaging|packing)\b', 'packaging'),
+        (r'\b(cleaning|safai|sweep)\b', 'cleaning'),
+        (r'\b(discount|cash discount)\b', 'cash_discount'),
+        (r'\b(purchase|khareed|buy|bought|saman)\b', 'purchase'),
+        (r'\b(office|stationary|supply|supplies)\b', 'office_supplies'),
+        (r'\b(dry.?clean|laundry|dhobi)\b', 'dry_cleaning'),
+        (r'\b(toffee|sweet|candy|biscuit|snack)\b', 'shop_supplies'),
+    ]
+    for pattern, tag in _RULES:
+        if _re.search(pattern, d):
+            return tag
+    return 'store_expense'
+
+
 @app.post('/api/confirm')
 async def api_confirm(req: ConfirmRequest):
     """Save (possibly edited) transactions from the confirm card UI."""
     store = get_or_create_store(req.phone)
     sid   = store['id']
+
+    # Ensure every expense has a tag — use AI parser for untagged expenses
+    untagged = [(i, t) for i, t in enumerate(req.transactions)
+                if t.get('type') == 'expense' and not t.get('tag')]
+    if untagged:
+        existing_tags = [et['tag'] for et in get_store_expense_tags(sid, limit=15)]
+        descs = [t.get('description', '') for _, t in untagged]
+        try:
+            from execution.moneybook_parser import assign_expense_tags
+            tags = assign_expense_tags(descs, existing_tags)
+            for (idx, t), tag in zip(untagged, tags):
+                req.transactions[idx]['tag'] = tag
+        except Exception:
+            # Fallback to keyword inference if AI call fails
+            for idx, t in untagged:
+                req.transactions[idx]['tag'] = _infer_expense_tag(t.get('description', ''), existing_tags)
 
     saved = []
     for t in req.transactions:
@@ -1366,7 +1423,9 @@ async def api_ledger_classify(req: LedgerClassifyRequest):
     Returns pending_transactions in the same format as the image/text parse endpoints.
     """
     store    = get_or_create_store(req.phone)
-    ctx      = build_store_context(store['id'])
+    sid      = store['id']
+    ctx      = build_store_context(sid)
+    etags    = [t['tag'] for t in get_store_expense_tags(sid, limit=15)]
     language = store.get('language', 'hinglish')
     today    = req.date or date.today().isoformat()
 
@@ -1384,7 +1443,7 @@ async def api_ledger_classify(req: LedgerClassifyRequest):
     message = '\n'.join(lines)
 
     try:
-        parsed = parse_text_message(message, store_context=ctx, language=language)
+        parsed = parse_text_message(message, store_context=ctx, language=language, existing_tags=etags)
         txns   = parsed.get('transactions', [])
 
         # Force date on all transactions and auto-classify section-tagged rows
@@ -1400,14 +1459,36 @@ async def api_ledger_classify(req: LedgerClassifyRequest):
             # Match by index — rows were fed to parser in same order
             src = ordered_sections[i] if i < len(ordered_sections) else {}
             section = src.get('section', 'general')
+            # Preserve manually-entered tag from ledger row if AI didn't assign one
+            manual_tag = src.get('tag', '').strip()
+            if manual_tag and not t.get('tag'):
+                t['tag'] = manual_tag
             person  = t.get('person_name') or src.get('person_name', '')
-            if section != 'general' and person:
-                cat = 'staff' if section == 'staff' else ('customer' if section == 'dues' else 'supplier')
-                save_person(store['id'], person, cat)
+            col     = src.get('column', 'in')
+            if section == 'staff':
+                # Staff OUT → expense with staff_expense tag
+                if col == 'out':
+                    t['type'] = 'expense'
+                    t['tag']  = 'staff_expense'
+                if person:
+                    save_person(store['id'], person, 'staff')
                 t['needs_tracking'] = False
-                t['person_category'] = cat
+                t['person_category'] = 'staff'
+            elif section == 'dues':
+                if person:
+                    save_person(store['id'], person, 'customer')
+                t['needs_tracking'] = False
+                t['person_category'] = 'customer'
+            elif section == 'others':
+                # Others — keep AI-parsed type, do NOT force expense
+                t['type'] = 'other'
+                t['column'] = col  # preserve IN/OUT side for display
+                if person:
+                    save_person(store['id'], person, 'supplier')
+                t['needs_tracking'] = False
+                t['person_category'] = 'supplier'
             elif section != 'general':
-                # Even without person name, skip classification for sectioned rows
+                # Any other tagged section — skip classification
                 t['needs_tracking'] = False
 
         response_msg = parsed.get('response_message', f'{len(txns)} entries from ledger')
@@ -1511,6 +1592,26 @@ async def api_staff(phone: str):
     sid   = store['id']
     staff = get_staff_detail(sid)
     return {'staff': staff}
+
+
+@app.get('/api/expense-categories')
+async def api_expense_categories(phone: str):
+    """Returns the store's existing expense tag categories (max 15)."""
+    from execution.moneybook_parser import TAG_META
+    store = get_or_create_store(phone)
+    sid   = store['id']
+    tags  = get_store_expense_tags(sid, limit=15)
+    result = []
+    for t in tags:
+        tag = t['tag']
+        meta = TAG_META.get(tag, (tag.replace('_', ' ').title(), '📝'))
+        result.append({
+            'tag':   tag,
+            'label': meta[0],
+            'emoji': meta[1],
+            'count': t['count'],
+        })
+    return {'categories': result}
 
 
 # ── Text-to-Speech ────────────────────────────────────────────
@@ -1685,14 +1786,30 @@ def _build_ledger_text(in_entries: list, out_entries: list, date_str: str,
 
     parts = []
 
-    # Intro — if date not from photo, flag it immediately
+    # Intro
     if date_from_photo:
         parts.append(ph['intro'].format(total=total, date=date_str))
     else:
-        # Date missing from notebook — call it out upfront too
         missing = _DATE_MISSING_PHRASES.get(language, _DATE_MISSING_PHRASES['hinglish'])
         parts.append(missing['intro_no_date'].format(total=total, date=date_str))
     parts.append('<break time="500ms"/>')
+
+    # Date warning — at the START before entries so user checks immediately
+    parts.append('<mark name="date"/>')
+    if date_from_photo:
+        parts.append(ph['date_warn'])
+        parts.append('<break time="400ms"/>')
+        parts.append(ph['date_set'].format(date=date_str))
+        parts.append('<break time="300ms"/>')
+        parts.append(ph['date_tip'])
+    else:
+        missing = _DATE_MISSING_PHRASES.get(language, _DATE_MISSING_PHRASES['hinglish'])
+        parts.append(missing['date_warn_strong'])
+        parts.append('<break time="500ms"/>')
+        parts.append(missing['date_set_default'].format(date=date_str))
+        parts.append('<break time="400ms"/>')
+        parts.append(missing['date_tip_strong'])
+    parts.append('<break time="700ms"/>')
 
     # JAMA entries
     if in_entries:
@@ -1713,23 +1830,6 @@ def _build_ledger_text(in_entries: list, out_entries: list, date_str: str,
             parts.append(f'<mark name="out_{i}"/>')
             parts.append(f'{i+1}. {e.get("desc","")}, <say-as interpret-as="cardinal">{amt(e.get("amount",0))}</say-as> {ph["rupees"]}.')
             parts.append('<break time="200ms"/>')
-
-    # Date emphasis at the end — stronger warning if date was missing
-    parts.append('<break time="900ms"/>')
-    parts.append('<mark name="date"/>')
-    if date_from_photo:
-        parts.append(ph['date_warn'])
-        parts.append('<break time="400ms"/>')
-        parts.append(ph['date_set'].format(date=date_str))
-        parts.append('<break time="300ms"/>')
-        parts.append(ph['date_tip'])
-    else:
-        missing = _DATE_MISSING_PHRASES.get(language, _DATE_MISSING_PHRASES['hinglish'])
-        parts.append(missing['date_warn_strong'])
-        parts.append('<break time="500ms"/>')
-        parts.append(missing['date_set_default'].format(date=date_str))
-        parts.append('<break time="400ms"/>')
-        parts.append(missing['date_tip_strong'])
 
     return ' '.join(parts)
 

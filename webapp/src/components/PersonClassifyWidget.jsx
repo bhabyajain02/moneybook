@@ -1,11 +1,10 @@
 import { useState } from 'react'
 
 const CATEGORIES = [
-  { key: 'staff',    label: 'Staff',    icon: '👷' },
-  { key: 'customer', label: 'Customer', icon: '🛒' },
-  { key: 'supplier', label: 'Supplier', icon: '📦' },
-  { key: 'home',     label: 'Home',     icon: '🏠' },
-  { key: 'other',    label: 'Other',    icon: '📋' },
+  { key: 'staff',         label: 'Staff',         icon: '👷' },
+  { key: 'customer',      label: 'Customer',      icon: '🛒' },
+  { key: 'store_expense', label: 'Store Expense',  icon: '🏪' },
+  { key: 'other',         label: 'Other',         icon: '📋' },
 ]
 
 export default function PersonClassifyWidget({ persons, staffOptions: initialStaffOptions, onComplete, onCancel }) {

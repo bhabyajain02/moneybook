@@ -4,19 +4,21 @@ import { quickParse } from '../api.js'
 export const TYPE_OPTIONS = [
   { value: 'sale',             label: '💰 Sale' },
   { value: 'expense',          label: '💸 Expense' },
-  { value: 'udhaar_given',     label: '📤 Udhaar Diya' },
-  { value: 'udhaar_received',  label: '📥 Udhaar Mila' },
+  { value: 'dues_given',        label: '📤 Dues Given' },
+  { value: 'dues_received',     label: '📥 Dues Received' },
   { value: 'bank_deposit',     label: '🏦 Bank Deposit' },
   { value: 'receipt',          label: '📨 Receipt' },
   { value: 'opening_balance',  label: '🔓 Opening Bal' },
   { value: 'closing_balance',  label: '🔒 Closing Bal' },
   { value: 'cash_in_hand',     label: '💵 Cash in Hand' },
   { value: 'upi_in_hand',      label: '📱 UPI in Hand' },
+  { value: 'other',             label: '📋 Other' },
 ]
 
 export const TYPE_COLORS = {
-  sale:'#25D366', receipt:'#25D366', udhaar_given:'#E53935',
-  udhaar_received:'#25D366', expense:'#FF7043', bank_deposit:'#9C27B0',
+  sale:'#25D366', receipt:'#25D366', dues_given:'#E53935',
+  dues_received:'#25D366', expense:'#FF7043', bank_deposit:'#9C27B0',
+  other:'#78909C',
   opening_balance:'#607D8B', closing_balance:'#607D8B',
   cash_in_hand:'#607D8B', upi_in_hand:'#2196F3',
 }
@@ -292,9 +294,9 @@ export default function ConfirmCard({ metadata, onConfirm, onCancel, onPendingEd
 
   const liveTxns = txns.filter(Boolean)
 
-  const totalIn  = liveTxns.filter(t => ['sale','receipt','udhaar_received'].includes(t.type))
+  const totalIn  = liveTxns.filter(t => ['sale','receipt','dues_received','udhaar_received'].includes(t.type) || (t.type === 'other' && t.column === 'in'))
                             .reduce((s, t) => s + (parseFloat(t.amount) || 0), 0)
-  const totalOut = liveTxns.filter(t => ['expense','udhaar_given','bank_deposit'].includes(t.type))
+  const totalOut = liveTxns.filter(t => ['expense','dues_given','udhaar_given','bank_deposit'].includes(t.type) || (t.type === 'other' && t.column !== 'in'))
                             .reduce((s, t) => s + (parseFloat(t.amount) || 0), 0)
 
   return (

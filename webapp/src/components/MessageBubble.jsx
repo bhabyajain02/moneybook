@@ -35,27 +35,28 @@ function formatTime(iso) {
 
 // ── SavedCard: 2-column JAMA/NAAM format after confirmation ─────
 const SC_COLORS = {
-  sale:'#25D366', receipt:'#25D366', udhaar_given:'#E53935',
-  udhaar_received:'#25D366', expense:'#FF7043', bank_deposit:'#9C27B0',
+  sale:'#25D366', receipt:'#25D366', dues_given:'#E53935', udhaar_given:'#E53935',
+  dues_received:'#25D366', udhaar_received:'#25D366', expense:'#FF7043', bank_deposit:'#9C27B0',
   opening_balance:'#607D8B', closing_balance:'#607D8B',
-  cash_in_hand:'#607D8B', upi_in_hand:'#2196F3',
+  cash_in_hand:'#607D8B', upi_in_hand:'#2196F3', other:'#78909C',
 }
 const SC_LABELS = {
-  sale:'💰 Sale', receipt:'📨 Receipt', udhaar_given:'📤 Udhaar Diya',
-  udhaar_received:'📥 Udhaar Mila', expense:'💸 Expense',
+  sale:'💰 Sale', receipt:'📨 Receipt', dues_given:'📤 Dues Given', udhaar_given:'📤 Dues Given',
+  dues_received:'📥 Dues Received', udhaar_received:'📥 Dues Received', expense:'💸 Expense',
   bank_deposit:'🏦 Bank', opening_balance:'🔓 Opening', closing_balance:'🔒 Closing',
-  cash_in_hand:'💵 Cash', upi_in_hand:'📱 UPI',
+  cash_in_hand:'💵 Cash', upi_in_hand:'📱 UPI', other:'📋 Other',
 }
-const SC_IN  = new Set(['sale','receipt','udhaar_received','cash_in_hand','upi_in_hand','opening_balance'])
-const SC_OUT = new Set(['expense','udhaar_given','bank_deposit','closing_balance'])
+const SC_IN  = new Set(['sale','receipt','dues_received','udhaar_received','cash_in_hand','upi_in_hand','opening_balance'])
+const SC_OUT = new Set(['expense','dues_given','udhaar_given','bank_deposit','closing_balance'])
 
 function SavedCell({ txn, onDelete }) {
   if (!txn) return <div className="sc-cell-empty" />
   const color = SC_COLORS[txn.type] || '#94a3b8'
   const label = SC_LABELS[txn.type] || txn.type
+  const hideLabel = txn.type === 'other'
   return (
     <div className="sc-cell" style={{ borderLeftColor: color }}>
-      <span className="sc-type" style={{ color, background: color + '18' }}>{label}</span>
+      {!hideLabel && <span className="sc-type" style={{ color, background: color + '18' }}>{label}</span>}
       <div className="sc-desc">{txn.description || '—'}</div>
       <div className="sc-amount">₹{parseFloat(txn.amount).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
       {txn.person_name && <div className="sc-person">👤 {txn.person_name}</div>}
@@ -83,9 +84,9 @@ function SavedCard({ transactions: initialTxns, phone }) {
     return <div className="saved-card saved-card-empty">🗑️ All entries deleted</div>
   }
 
-  const inEntries    = txns.filter(t => SC_IN.has(t.type))
-  const outEntries   = txns.filter(t => SC_OUT.has(t.type))
-  const otherEntries = txns.filter(t => !SC_IN.has(t.type) && !SC_OUT.has(t.type))
+  const inEntries    = txns.filter(t => SC_IN.has(t.type) || (t.type === 'other' && t.column === 'in'))
+  const outEntries   = txns.filter(t => SC_OUT.has(t.type) || (t.type === 'other' && t.column !== 'in'))
+  const otherEntries = txns.filter(t => !SC_IN.has(t.type) && !SC_OUT.has(t.type) && t.type !== 'other')
   const maxRows      = Math.max(inEntries.length, outEntries.length)
 
   const totalIn  = inEntries .reduce((s, t) => s + (parseFloat(t.amount) || 0), 0)

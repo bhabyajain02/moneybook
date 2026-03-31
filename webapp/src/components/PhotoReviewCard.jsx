@@ -5,9 +5,10 @@ import {
 } from './ConfirmCard.jsx'
 
 // Types that belong on the IN (JAMA) side
-const IN_TYPES  = new Set(['sale','receipt','udhaar_received','cash_in_hand','upi_in_hand','opening_balance'])
+const IN_TYPES  = new Set(['sale','receipt','dues_received','udhaar_received','cash_in_hand','upi_in_hand','opening_balance'])
 // Types on the OUT (NAAM) side
-const OUT_TYPES = new Set(['expense','udhaar_given','bank_deposit','closing_balance'])
+const OUT_TYPES = new Set(['expense','dues_given','udhaar_given','bank_deposit','closing_balance'])
+// 'other' uses column field to determine side
 
 // ── Single cell in the review grid ─────────────────────────────
 function ReviewCell({ entry, editingIdx, onEdit, onUpdate, onDelete }) {
@@ -62,8 +63,8 @@ function ReviewLedgerGrid({ txns, onUpdate, onDelete }) {
   const otherEntries = []
   txns.forEach((t, i) => {
     if (!t) return
-    if (IN_TYPES.has(t.type))   inEntries.push({ txn: t, idx: i })
-    else if (OUT_TYPES.has(t.type)) outEntries.push({ txn: t, idx: i })
+    if (IN_TYPES.has(t.type) || (t.type === 'other' && t.column === 'in'))   inEntries.push({ txn: t, idx: i })
+    else if (OUT_TYPES.has(t.type) || (t.type === 'other' && t.column !== 'in')) outEntries.push({ txn: t, idx: i })
     else otherEntries.push({ txn: t, idx: i })
   })
 
@@ -165,9 +166,9 @@ export default function PhotoReviewCard({ metadata, onConfirm, onCancel, onPendi
   }
 
   const liveTxns = txns.filter(Boolean)
-  const totalIn  = liveTxns.filter(t => IN_TYPES.has(t.type))
+  const totalIn  = liveTxns.filter(t => IN_TYPES.has(t.type) || (t.type === 'other' && t.column === 'in'))
                             .reduce((s, t) => s + (parseFloat(t.amount) || 0), 0)
-  const totalOut = liveTxns.filter(t => OUT_TYPES.has(t.type))
+  const totalOut = liveTxns.filter(t => OUT_TYPES.has(t.type) || (t.type === 'other' && t.column !== 'in'))
                             .reduce((s, t) => s + (parseFloat(t.amount) || 0), 0)
 
   const dateStr = batchDate

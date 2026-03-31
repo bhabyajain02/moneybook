@@ -36,10 +36,26 @@ const TAG_META = {
   rent: { icon: "🏠", color: "#F44336" },
   electricity: { icon: "⚡", color: "#FFC107" },
   food: { icon: "🍽️", color: "#8BC34A" },
+  refreshment: { icon: "☕", color: "#8BC34A" },
   transport: { icon: "🚗", color: "#03A9F4" },
+  freight: { icon: "🚚", color: "#03A9F4" },
   purchase: { icon: "🛒", color: "#FF5722" },
+  cleaning: { icon: "🧹", color: "#26A69A" },
+  office_supplies: { icon: "📎", color: "#78909C" },
+  services: { icon: "🔧", color: "#5C6BC0" },
+  repair: { icon: "🔧", color: "#5C6BC0" },
+  home_expense: { icon: "🏡", color: "#AB47BC" },
+  petrol: { icon: "⛽", color: "#EF6C00" },
+  packaging: { icon: "📦", color: "#8D6E63" },
+  insurance: { icon: "🛡️", color: "#00838F" },
+  water: { icon: "💧", color: "#0288D1" },
+  telephone: { icon: "📞", color: "#7B1FA2" },
   other: { icon: "📋", color: "#607D8B" },
+  uncategorized: { icon: "📋", color: "#9E9E9E" },
   store_expense: { icon: "🏪", color: "#795548" },
+  "staff expense": { icon: "👷", color: "#FF9800" },
+  shop_supplies: { icon: "🛒", color: "#FF5722" },
+  dry_cleaning: { icon: "👔", color: "#5C6BC0" },
 };
 
 // Tags that represent payment channels / revenue collections — NOT true expenses
@@ -281,10 +297,9 @@ export default function AnalyticsPage({
     const collections = [];
     let staffTotal = kpis.staff_expenses || 0; // staff_salary from kpis
     let discountTotal = 0;
-    let storeTotal = 0;
+    const storeExpenseByTag = {};  // tag → amount
 
     Object.entries(data.expense_tags || {}).forEach(([tag, amt]) => {
-      if (tag === "other") return;
 
       const lower = tag.toLowerCase();
 
@@ -303,7 +318,8 @@ export default function AnalyticsPage({
       if (lower.includes("staff")) {
         staffTotal += amt;
       } else {
-        storeTotal += amt;
+        // Per-category store expense breakdown
+        storeExpenseByTag[tag] = (storeExpenseByTag[tag] || 0) + amt;
       }
     });
 
@@ -312,8 +328,10 @@ export default function AnalyticsPage({
       expenses.push({ tag: "staff_expense", amt: staffTotal });
     if (discountTotal > 0)
       expenses.push({ tag: "cash_discount", amt: discountTotal });
-    if (storeTotal > 0)
-      expenses.push({ tag: "store_expense", amt: storeTotal });
+    // Add individual store expense categories
+    Object.entries(storeExpenseByTag).forEach(([tag, amt]) => {
+      if (amt > 0) expenses.push({ tag, amt });
+    });
 
     return {
       expenseCats: expenses.sort((a, b) => b.amt - a.amt),

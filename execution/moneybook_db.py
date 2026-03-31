@@ -318,7 +318,7 @@ def add_transaction(store_id: int, txn: dict,
         ))
         txn_id = cursor.lastrowid
 
-        if txn['type'] in ('udhaar_given', 'udhaar_received') and txn.get('person_name'):
+        if txn['type'] in ('udhaar_given', 'udhaar_received', 'dues_given', 'dues_received') and txn.get('person_name'):
             _update_udhaar(conn, store_id, txn, txn_id, txn_date)
 
     return txn_id
@@ -344,8 +344,8 @@ def _update_udhaar(conn, store_id: int, txn: dict, txn_id: int, txn_date: str):
         ).fetchone()
 
     uid = row['id']
-    delta = amount if txn['type'] == 'udhaar_given' else -amount
-    ut    = 'given' if txn['type'] == 'udhaar_given' else 'received'
+    delta = amount if txn['type'] in ('udhaar_given', 'dues_given') else -amount
+    ut    = 'given' if txn['type'] in ('udhaar_given', 'dues_given') else 'received'
 
     conn.execute(
         "UPDATE udhaar SET balance = balance + ?, last_transaction_date = ? WHERE id = ?",
@@ -387,10 +387,10 @@ def get_daily_summary(store_id: int, for_date: str = None) -> dict:
 
         # Expense breakdown by tag (for detailed category view)
         expense_tags = conn.execute("""
-            SELECT COALESCE(tag, 'other') AS tag, SUM(amount) AS total
+            SELECT COALESCE(NULLIF(tag, ''), 'uncategorized') AS tag, SUM(amount) AS total
             FROM transactions
             WHERE store_id = ? AND date = ? AND type = 'expense'
-            GROUP BY COALESCE(tag, 'other')
+            GROUP BY COALESCE(NULLIF(tag, ''), 'uncategorized')
             ORDER BY total DESC
         """, (store_id, for_date)).fetchall()
 
@@ -418,53 +418,53 @@ def get_period_summary(store_id: int, start_date: str, end_date: str, label: str
             GROUP BY type
         """, (store_id, start_date, end_date)).fetchall()
 
-        # Operating expense breakdown by tag (exclude staff_salary)
+        # Operating expense breakdown by tag (exclude staff tags)
         expense_tags = conn.execute("""
-            SELECT COALESCE(tag, 'other') AS tag, SUM(amount) AS total
+            SELECT COALESCE(NULLIF(tag, ''), 'uncategorized') AS tag, SUM(amount) AS total
             FROM transactions
             WHERE store_id = ? AND date BETWEEN ? AND ? AND type = 'expense'
-              AND COALESCE(tag, 'other') != 'staff_salary'
-            GROUP BY COALESCE(tag, 'other')
+              AND COALESCE(tag, '') NOT IN ('staff_salary', 'staff_expense', 'staff expense')
+            GROUP BY COALESCE(NULLIF(tag, ''), 'uncategorized')
             ORDER BY total DESC
         """, (store_id, start_date, end_date)).fetchall()
 
-        # Staff expense breakdown (staff_salary tag only)
+        # Staff expense breakdown (staff tags only)
         staff_expense_tags = conn.execute("""
-            SELECT COALESCE(tag, 'other') AS tag, SUM(amount) AS total
+            SELECT COALESCE(NULLIF(tag, ''), 'staff_expense') AS tag, SUM(amount) AS total
             FROM transactions
             WHERE store_id = ? AND date BETWEEN ? AND ? AND type = 'expense'
-              AND COALESCE(tag, 'other') = 'staff_salary'
-            GROUP BY COALESCE(tag, 'other')
+              AND COALESCE(tag, '') IN ('staff_salary', 'staff_expense', 'staff expense')
+            GROUP BY COALESCE(NULLIF(tag, ''), 'staff_expense')
             ORDER BY total DESC
         """, (store_id, start_date, end_date)).fetchall()
 
-        # Staff expense total
+        # Staff expense total (matches both staff_salary and staff_expense tags)
         staff_exp_row = conn.execute("""
             SELECT SUM(amount) AS total
             FROM transactions
             WHERE store_id = ? AND date BETWEEN ? AND ? AND type = 'expense'
-              AND COALESCE(tag, 'other') = 'staff_salary'
+              AND COALESCE(tag, '') IN ('staff_salary', 'staff_expense', 'staff expense')
         """, (store_id, start_date, end_date)).fetchone()
 
-        # Operating expense total (non-staff)
+        # Operating expense total (non-staff = everything else with type expense)
         op_exp_row = conn.execute("""
             SELECT SUM(amount) AS total
             FROM transactions
             WHERE store_id = ? AND date BETWEEN ? AND ? AND type = 'expense'
-              AND COALESCE(tag, 'other') != 'staff_salary'
+              AND COALESCE(tag, '') NOT IN ('staff_salary', 'staff_expense', 'staff expense')
         """, (store_id, start_date, end_date)).fetchone()
 
-        # Udhaar given and received in the period
+        # Dues given and received in the period (supports both old and new type names)
         udhaar_given_row = conn.execute("""
             SELECT SUM(amount) AS total
             FROM transactions
-            WHERE store_id = ? AND date BETWEEN ? AND ? AND type = 'udhaar_given'
+            WHERE store_id = ? AND date BETWEEN ? AND ? AND type IN ('udhaar_given', 'dues_given')
         """, (store_id, start_date, end_date)).fetchone()
 
         udhaar_received_row = conn.execute("""
             SELECT SUM(amount) AS total
             FROM transactions
-            WHERE store_id = ? AND date BETWEEN ? AND ? AND type = 'udhaar_received'
+            WHERE store_id = ? AND date BETWEEN ? AND ? AND type IN ('udhaar_received', 'dues_received')
         """, (store_id, start_date, end_date)).fetchone()
 
         # Daily sales trend (for context)
@@ -717,6 +717,22 @@ def get_recent_corrections(store_id: int, limit: int = 15) -> list:
     return get_corrections_by_scope('store', store_id=store_id, limit=limit)
 
 
+def get_store_expense_tags(store_id: int, limit: int = 15) -> list:
+    """Return the most-used expense tags for this store, capped at `limit`."""
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT tag, COUNT(*) AS cnt
+            FROM transactions
+            WHERE store_id = ? AND type = 'expense'
+              AND tag IS NOT NULL AND tag != ''
+              AND tag NOT IN ('staff_salary', 'staff_expense', 'staff expense')
+            GROUP BY tag
+            ORDER BY cnt DESC
+            LIMIT ?
+        """, (store_id, limit)).fetchall()
+        return [{'tag': r['tag'], 'count': r['cnt']} for r in rows]
+
+
 # ─────────────────────────────────────────────
 # Analytics helpers
 # ─────────────────────────────────────────────
@@ -781,7 +797,7 @@ def get_top_receivers(store_id: int, start: str, end: str, limit: int = 5) -> li
             SELECT person_name, SUM(amount) AS total, COUNT(*) AS count
             FROM transactions
             WHERE store_id = ? AND date BETWEEN ? AND ?
-              AND type = 'udhaar_received'
+              AND type IN ('udhaar_received', 'dues_received')
               AND person_name IS NOT NULL
             GROUP BY person_name
             ORDER BY total DESC

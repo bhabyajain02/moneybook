@@ -1,12 +1,31 @@
 import { useState, useRef, useEffect } from 'react'
-import { classifyLedger, speakLedger, fetchDues, fetchStaff } from '../api.js'
+import { classifyLedger, speakLedger, fetchDues, fetchStaff, fetchExpenseCategories } from '../api.js'
 
-const EMPTY_ROW      = () => ({ particulars: '', amount: '', _txn: null })
+const EMPTY_ROW      = () => ({ particulars: '', amount: '', tag: '', _txn: null })
 const EMPTY_DUES_ROW = () => ({ desc: '', billNo: '', amount: '' })
 const EMPTY_PERSON_ROW = () => ({ name: '', amount: '' })
 
-const IN_TYPES  = new Set(['sale','receipt','udhaar_received','cash_in_hand','upi_in_hand','opening_balance'])
-const OUT_TYPES = new Set(['expense','udhaar_given','bank_deposit','closing_balance'])
+const IN_TYPES  = new Set(['sale','receipt','dues_received','udhaar_received','cash_in_hand','upi_in_hand','opening_balance'])
+const OUT_TYPES = new Set(['expense','dues_given','udhaar_given','bank_deposit','closing_balance','other'])
+
+// OUT-side types that are NOT store expenses → Others
+const _OUT_OTHERS_TYPES = new Set(['closing_balance','bank_deposit','cash_in_hand','upi_in_hand','other'])
+// IN-side types that should stay in General (not Others)
+const _IN_GENERAL_TYPES = new Set(['sale','receipt','opening_balance','cash_in_hand','upi_in_hand'])
+
+// Detect entries that should route to Others section instead of Store Expense
+const _PAYMENT_KEYWORDS = /\b(cash|upi|neft|rtgs|imps|gpay|phonepe|paytm|bank\s*transfer|pos|online\s*payment|card\s*payment|cheque|collection|settlement)\b/i
+function _isOthersEntry(txn, side) {
+  // IN-side: opening_balance, sale, cash_in_hand etc. stay in General
+  if (side === 'in' && _IN_GENERAL_TYPES.has(txn.type)) return false
+  // OUT-side: closing_balance, bank_deposit, cash/upi in hand, other → Others
+  if (side === 'out' && _OUT_OTHERS_TYPES.has(txn.type)) return true
+  const desc = (txn.description || '').toLowerCase()
+  const tag  = (txn.tag || '').toLowerCase()
+  // Payment/collection keywords in description or tag on OUT side → Others
+  if (side === 'out' && (_PAYMENT_KEYWORDS.test(desc) || _PAYMENT_KEYWORDS.test(tag))) return true
+  return false
+}
 
 // Convert AI transactions → ledger rows, split by IN/OUT.
 function txnsToRows(txns = [], display = null) {
@@ -143,14 +162,22 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
       if (cat === 'staff') {
         staff[side].push({ name: t.person_name || '', amount: String(t.amount || ''), _txn: t })
       } else if (cat === 'supplier' || cat === 'other') {
-        // Supplier and "Other" — both go to the Others section regardless of txn type
         others[side].push({ name: t.person_name || '', amount: String(t.amount || ''), _txn: t })
-      } else if (cat === 'customer' || (!cat && (t.type === 'udhaar_received' || t.type === 'udhaar_given'))) {
-        // Customer explicitly, OR udhaar type with no explicit category override
+      } else if (cat === 'store_expense') {
+        // Store expense → first subsection on right side with category tag
+        general.outRows.push({ particulars: t.description || t.person_name || 'Store Expense', amount: String(t.amount || ''), tag: t.tag || '', _txn: t })
+      } else if (cat === 'customer' || (!cat && (t.type === 'dues_received' || t.type === 'dues_given' || t.type === 'udhaar_received' || t.type === 'udhaar_given'))) {
+        // Customer explicitly, OR dues/udhaar type with no explicit category override
         dues[side].push({ desc: t.description || '', billNo: t.bill_number || '', amount: String(t.amount || ''), _txn: t })
+      } else if (!cat && _isOthersEntry(t, side)) {
+        // Closing balance, POS/UPI collection, bank deposits, etc → Others section
+        others[side].push({ name: t.person_name || t.description || '', amount: String(t.amount || ''), _txn: t })
+      } else if (!cat && t.type === 'expense') {
+        // Store expense (tagged or not) → Store Expense (general OUT)
+        general.outRows.push({ particulars: t.description || '', amount: String(t.amount || ''), tag: t.tag || '', _txn: t })
       } else {
-        // General row (home, unknown, no category)
-        const row = { particulars: t.description || '', amount: String(t.amount || ''), _txn: t }
+        // Everything else → general section
+        const row = { particulars: t.description || '', amount: String(t.amount || ''), tag: t.tag || '', _txn: t }
         if (isIn) general.inRows.push(row)
         else general.outRows.push(row)
       }
@@ -185,6 +212,12 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
   const [othersOutRows, setOthersOutRows] = useState(_init.othersOut)
   const [staffOptions,  setStaffOptions]  = useState([])
   const [othersOptions, setOthersOptions] = useState([])
+  const [expenseCategories, setExpenseCategories] = useState([])  // [{tag, label, emoji}]
+
+  const [dragItem, setDragItem]       = useState(null)  // { source:'generalIn'|'generalOut'|'duesIn'|..., idx }
+  const [dropTarget, setDropTarget]   = useState(null)  // section key being hovered
+  const paperRef    = useRef(null)     // for auto-scroll during drag
+  const scrollRAF   = useRef(null)
 
   const [loading, setLoading]         = useState(false)
   const [speaking, setSpeaking]         = useState(false)
@@ -210,6 +243,9 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
         const names = [...new Set((data || []).map(d => d.person_name).filter(Boolean))]
         setOthersOptions(names)
       })
+      .catch(() => {})
+    fetchExpenseCategories(phone)
+      .then(data => setExpenseCategories((data?.categories || []).map(c => ({ tag: c.tag, label: c.label, emoji: c.emoji }))))
       .catch(() => {})
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phone])
@@ -323,7 +359,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             setSpeakingDate(false)
             const [side, idxStr] = active.split('_')
             const mapped = ttsIdxMapRef.current[side]?.[parseInt(idxStr)]
-            setSpeakingIdx(mapped || null)
+            setSpeakingIdx(mapped ? { ...mapped, side } : null)
           }
         })
       }
@@ -395,6 +431,101 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
   function addSectionRow(section, emptyFn) {
     SECTION_SETTERS[section](prev => [...prev, emptyFn()])
   }
+  function deleteRow(side, idx) {
+    const setter = side === 'in' ? setInRows : setOutRows
+    setter(prev => prev.length <= 1 ? [EMPTY_ROW()] : prev.filter((_, i) => i !== idx))
+  }
+  function deleteSectionRow(section, emptyFn, idx) {
+    SECTION_SETTERS[section](prev => prev.length <= 1 ? [emptyFn()] : prev.filter((_, i) => i !== idx))
+  }
+
+  // ── Drag & drop between sections ──────────────────────────────
+  function _getRowData(source, idx) {
+    const map = {
+      generalIn: inRows, generalOut: outRows,
+      duesIn: duesInRows, duesOut: duesOutRows,
+      staffIn: staffInRows, staffOut: staffOutRows,
+      othersIn: othersInRows, othersOut: othersOutRows,
+    }
+    return map[source]?.[idx]
+  }
+
+  function _removeFromSource(source, idx) {
+    if (source === 'generalIn')  setInRows(prev => prev.filter((_, i) => i !== idx))
+    else if (source === 'generalOut') setOutRows(prev => prev.filter((_, i) => i !== idx))
+    else SECTION_SETTERS[source]?.(prev => prev.filter((_, i) => i !== idx))
+  }
+
+  function _convertRow(row, targetSection) {
+    // Convert between row formats: general={particulars,amount,tag}, dues={desc,billNo,amount}, person={name,amount}
+    const desc = row.particulars || row.desc || row.name || ''
+    const amt  = row.amount || ''
+    // Clone _txn so we can update the type based on target section
+    const txn = row._txn ? { ...row._txn } : null
+    if (txn) {
+      const isOut = targetSection.endsWith('Out')
+      const isIn  = targetSection.endsWith('In')
+      if (targetSection.startsWith('general') && isOut)       { txn.type = 'expense'; }
+      else if (targetSection.startsWith('general') && isIn)   { txn.type = txn.type === 'dues_received' ? 'sale' : (txn.type || 'sale'); }
+      else if (targetSection.startsWith('dues') && isOut)     { txn.type = 'dues_given'; txn.tag = null; }
+      else if (targetSection.startsWith('dues') && isIn)      { txn.type = 'dues_received'; txn.tag = null; }
+      else if (targetSection.startsWith('staff') && isOut)    { txn.type = 'expense'; txn.tag = 'staff_expense'; }
+      else if (targetSection.startsWith('staff') && isIn)     { txn.type = 'receipt'; txn.tag = null; }
+      else if (targetSection.startsWith('others'))            { txn.type = 'other'; txn.tag = null; }
+    }
+    if (targetSection.startsWith('general'))
+      return { particulars: desc, amount: amt, tag: (txn?.tag) || row.tag || '', _txn: txn }
+    if (targetSection.startsWith('dues'))
+      return { desc, billNo: row.billNo || '', amount: amt, _txn: txn }
+    // staff or others
+    return { name: desc, amount: amt, _txn: txn }
+  }
+
+  function handleDrop(targetSection) {
+    if (!dragItem) return
+    const { source, idx } = dragItem
+    if (source === targetSection) { setDragItem(null); setDropTarget(null); return }
+    const row = _getRowData(source, idx)
+    if (!row) { setDragItem(null); setDropTarget(null); return }
+    const converted = _convertRow(row, targetSection)
+    _removeFromSource(source, idx)
+    if (targetSection === 'generalIn')       setInRows(prev => [...prev, converted])
+    else if (targetSection === 'generalOut') setOutRows(prev => [...prev, converted])
+    else SECTION_SETTERS[targetSection]?.(prev => [...prev, converted])
+    setDragItem(null)
+    setDropTarget(null)
+  }
+
+  function onDragStart(source, idx, e) {
+    setDragItem({ source, idx })
+    // Set drag image and data for HTML5 DnD
+    if (e?.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move'
+      e.dataTransfer.setData('text/plain', `${source}:${idx}`)
+    }
+  }
+  function onDragOver(e, section) { e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'; setDropTarget(section) }
+  function onDragLeave() { setDropTarget(null) }
+  function onDragEnd() { setDragItem(null); setDropTarget(null); if (scrollRAF.current) { cancelAnimationFrame(scrollRAF.current); scrollRAF.current = null } }
+
+  // Auto-scroll the ledger-paper when dragging near edges
+  function handleDragAutoScroll(e) {
+    if (!dragItem || !paperRef.current) return
+    const paper = paperRef.current
+    const rect = paper.getBoundingClientRect()
+    const y = e.clientY
+    const edgeZone = 50 // px from top/bottom edge
+    const speed = 8
+
+    if (scrollRAF.current) cancelAnimationFrame(scrollRAF.current)
+    if (y < rect.top + edgeZone) {
+      // Scroll up
+      scrollRAF.current = requestAnimationFrame(() => { paper.scrollTop -= speed })
+    } else if (y > rect.bottom - edgeZone) {
+      // Scroll down
+      scrollRAF.current = requestAnimationFrame(() => { paper.scrollTop += speed })
+    }
+  }
 
   const totalIn  = [...inRows, ...duesInRows, ...staffInRows, ...othersInRows]
     .reduce((s, r) => s + (parseFloat(r.amount) || 0), 0)
@@ -411,12 +542,12 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
       try {
         const editedTxns = [
           ...rowsToTxns(inRows, outRows, date),
-          ...validDuesIn .map(r => ({ type: 'udhaar_received', description: r.desc || 'Dues received', bill_number: r.billNo || '', amount: parseFloat(r.amount) || 0, date })),
-          ...validDuesOut.map(r => ({ type: 'udhaar_given',    description: r.desc || 'Dues given',    bill_number: r.billNo || '', amount: parseFloat(r.amount) || 0, date })),
+          ...validDuesIn .map(r => ({ type: 'dues_received', description: r.desc || 'Dues received', bill_number: r.billNo || '', amount: parseFloat(r.amount) || 0, date })),
+          ...validDuesOut.map(r => ({ type: 'dues_given',    description: r.desc || 'Dues given',    bill_number: r.billNo || '', amount: parseFloat(r.amount) || 0, date })),
           ...validStaffIn  .map(r => ({ type: 'receipt', description: r.name || 'Staff',         person_name: r.name || '', amount: parseFloat(r.amount) || 0, date })),
-          ...validStaffOut .map(r => ({ type: 'expense', description: r.name || 'Staff expense', person_name: r.name || '', amount: parseFloat(r.amount) || 0, date })),
-          ...validOthersIn .map(r => ({ type: 'receipt', description: r.name || 'Others',        person_name: r.name || '', amount: parseFloat(r.amount) || 0, date })),
-          ...validOthersOut.map(r => ({ type: 'expense', description: r.name || 'Others',        person_name: r.name || '', amount: parseFloat(r.amount) || 0, date })),
+          ...validStaffOut .map(r => ({ type: 'expense', description: r.name || 'Staff expense', person_name: r.name || '', tag: 'staff_expense', amount: parseFloat(r.amount) || 0, date })),
+          ...validOthersIn .map(r => ({ type: 'other',   description: r.name || 'Others', person_name: r.name || '', amount: parseFloat(r.amount) || 0, date, column: 'in' })),
+          ...validOthersOut.map(r => ({ type: 'other',   description: r.name || 'Others', person_name: r.name || '', amount: parseFloat(r.amount) || 0, date, column: 'out' })),
         ]
         await prefill.onSave(editedTxns, prefill.msgId)
         // Don't call onClose() here — prefill.onSave closes via setPhotoReview(null)
@@ -430,7 +561,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
         [r.desc, r.billNo ? `Bill#${r.billNo}` : ''].filter(Boolean).join(' ') || suffix
       const rows = [
         ...validIn      .map(r => ({ particulars: r.particulars,                  amount: r.amount, column: 'in',  section: 'general' })),
-        ...validOut     .map(r => ({ particulars: r.particulars,                  amount: r.amount, column: 'out', section: 'general' })),
+        ...validOut     .map(r => ({ particulars: r.particulars,                  amount: r.amount, column: 'out', section: 'general', tag: r.tag || undefined })),
         ...validDuesIn  .map(r => ({ particulars: duesBillDesc(r,'Dues received'), amount: r.amount, column: 'in',  section: 'dues' })),
         ...validDuesOut .map(r => ({ particulars: duesBillDesc(r,'Dues given'),    amount: r.amount, column: 'out', section: 'dues' })),
         ...validStaffIn  .map(r => ({ particulars: r.name || 'Staff',             amount: r.amount, column: 'in',  section: 'staff', person_name: r.name })),
@@ -496,7 +627,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
         </div>
 
         {/* ── Ledger paper ── */}
-        <div className="ledger-paper">
+        <div className="ledger-paper" ref={paperRef} onDragOver={handleDragAutoScroll}>
 
           {/* Column headers */}
           <div className="ledger-col-header-row">
@@ -525,13 +656,21 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
           </div>
 
           {/* Data rows */}
-          <div className="ledger-rows-body">
+          <div className={`ledger-rows-body${dropTarget === 'generalIn' || dropTarget === 'generalOut' ? ' ledger-drop-active' : ''}`}
+            onDragOver={e => { e.preventDefault(); const rect = e.currentTarget.getBoundingClientRect(); setDropTarget(e.clientX < rect.left + rect.width/2 ? 'generalIn' : 'generalOut') }}
+            onDragLeave={onDragLeave}
+            onDrop={() => handleDrop(dropTarget || 'generalOut')}
+          >
             {Array.from({ length: maxRows }).map((_, i) => {
               const isActiveIn  = speakingIdx?.side === 'in'  && speakingIdx.section === 'general' && speakingIdx.rowIdx === i && i < inRows.length
               const isActiveOut = speakingIdx?.side === 'out' && speakingIdx.section === 'general' && speakingIdx.rowIdx === i && i < outRows.length
               return (
               <div key={i} className="ledger-data-row">
-                <div className={`ledger-entry-cell${isActiveIn ? ' ledger-cell--speaking' : ''}`}>
+                <div className={`ledger-entry-cell${isActiveIn ? ' ledger-cell--speaking' : ''}`}
+                  draggable={i < inRows.length && !!inRows[i].particulars.trim()}
+                  onDragStart={e => onDragStart('generalIn', i, e)}
+                  onDragEnd={onDragEnd}
+                >
                   {i < inRows.length ? (
                     <>
                       <textarea
@@ -551,13 +690,18 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                         onChange={e => updateRow('in', i, 'amount', e.target.value)}
                         onKeyDown={e => handleAmtKeyDown('in', i, e)}
                       />
+                      <button className="ledger-del-btn" onClick={() => deleteRow('in', i)} title="Delete">✕</button>
                     </>
                   ) : <div className="ledger-cell-placeholder" />}
                 </div>
 
                 <div className="ledger-center-divider" />
 
-                <div className={`ledger-entry-cell${isActiveOut ? ' ledger-cell--speaking' : ''}`}>
+                <div className={`ledger-entry-cell${isActiveOut ? ' ledger-cell--speaking' : ''}`}
+                  draggable={i < outRows.length && !!outRows[i].particulars.trim()}
+                  onDragStart={e => onDragStart('generalOut', i, e)}
+                  onDragEnd={onDragEnd}
+                >
                   {i < outRows.length ? (
                     <>
                       <textarea
@@ -577,6 +721,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                         onChange={e => updateRow('out', i, 'amount', e.target.value)}
                         onKeyDown={e => handleAmtKeyDown('out', i, e)}
                       />
+                      <button className="ledger-del-btn" onClick={() => deleteRow('out', i)} title="Delete">✕</button>
                     </>
                   ) : <div className="ledger-cell-placeholder" />}
                 </div>
@@ -584,6 +729,8 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
               )
             })}
           </div>
+
+          {/* Tag is stored internally on rows but not shown in UI — visible only in Analytics */}
 
           {/* Add row buttons — general section */}
           <div className="ledger-add-row">
@@ -593,6 +740,11 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
           </div>
 
           {/* ══ DUES section ══ */}
+          <div className={`ledger-section-drop-zone${dropTarget === 'duesIn' || dropTarget === 'duesOut' ? ' ledger-section--drop-active' : ''}`}
+            onDragOver={e => { e.preventDefault(); const rect = e.currentTarget.getBoundingClientRect(); setDropTarget(e.clientX < rect.left + rect.width/2 ? 'duesIn' : 'duesOut') }}
+            onDragLeave={onDragLeave}
+            onDrop={() => handleDrop(dropTarget || 'duesIn')}
+          >
           <div className="ledger-section-divider">
             <div className="ledger-section-label">📥 Dues Received</div>
             <div className="ledger-center-divider" />
@@ -603,7 +755,11 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             const duesActiveOut = speakingIdx?.side === 'out' && speakingIdx.section === 'dues' && speakingIdx.rowIdx === i
             return (
             <div key={`dues-${i}`} className="ledger-data-row">
-              <div className={`ledger-entry-cell ledger-dues-cell${duesActiveIn ? ' ledger-cell--speaking' : ''}`}>
+              <div className={`ledger-entry-cell ledger-dues-cell${duesActiveIn ? ' ledger-cell--speaking' : ''}`}
+                draggable={i < duesInRows.length && !!(duesInRows[i].desc || duesInRows[i].amount)}
+                onDragStart={e => onDragStart('duesIn', i, e)}
+                onDragEnd={onDragEnd}
+              >
                 {i < duesInRows.length ? (
                   <>
                     <input className="ledger-input-desc ledger-input-desc--dues"
@@ -620,11 +776,16 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                       value={duesInRows[i].amount}
                       onChange={e => updateSectionRow('duesIn', i, 'amount', e.target.value)}
                     />
+                    <button className="ledger-del-btn" onClick={() => deleteSectionRow('duesIn', EMPTY_DUES_ROW, i)} title="Delete">✕</button>
                   </>
                 ) : <div className="ledger-cell-placeholder" />}
               </div>
               <div className="ledger-center-divider" />
-              <div className={`ledger-entry-cell ledger-dues-cell${duesActiveOut ? ' ledger-cell--speaking' : ''}`}>
+              <div className={`ledger-entry-cell ledger-dues-cell${duesActiveOut ? ' ledger-cell--speaking' : ''}`}
+                draggable={i < duesOutRows.length && !!(duesOutRows[i].desc || duesOutRows[i].amount)}
+                onDragStart={e => onDragStart('duesOut', i, e)}
+                onDragEnd={onDragEnd}
+              >
                 {i < duesOutRows.length ? (
                   <>
                     <input className="ledger-input-desc ledger-input-desc--dues"
@@ -641,6 +802,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                       value={duesOutRows[i].amount}
                       onChange={e => updateSectionRow('duesOut', i, 'amount', e.target.value)}
                     />
+                    <button className="ledger-del-btn" onClick={() => deleteSectionRow('duesOut', EMPTY_DUES_ROW, i)} title="Delete">✕</button>
                   </>
                 ) : <div className="ledger-cell-placeholder" />}
               </div>
@@ -652,8 +814,14 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             <div className="ledger-center-divider" />
             <button className="ledger-add-btn" onClick={() => addSectionRow('duesOut', EMPTY_DUES_ROW)}>+ Dues row</button>
           </div>
+          </div>{/* end DUES drop zone */}
 
           {/* ══ STAFF section ══ */}
+          <div className={`ledger-section-drop-zone${dropTarget === 'staffIn' || dropTarget === 'staffOut' ? ' ledger-section--drop-active' : ''}`}
+            onDragOver={e => { e.preventDefault(); const rect = e.currentTarget.getBoundingClientRect(); setDropTarget(e.clientX < rect.left + rect.width/2 ? 'staffIn' : 'staffOut') }}
+            onDragLeave={onDragLeave}
+            onDrop={() => handleDrop(dropTarget || 'staffIn')}
+          >
           <div className="ledger-section-divider">
             <div className="ledger-section-label">👷 Staff (In)</div>
             <div className="ledger-center-divider" />
@@ -664,7 +832,11 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             const staffActiveOut = speakingIdx?.side === 'out' && speakingIdx.section === 'staff' && speakingIdx.rowIdx === i
             return (
             <div key={`staff-${i}`} className="ledger-data-row">
-              <div className={`ledger-entry-cell${staffActiveIn ? ' ledger-cell--speaking' : ''}`}>
+              <div className={`ledger-entry-cell${staffActiveIn ? ' ledger-cell--speaking' : ''}`}
+                draggable={i < staffInRows.length && !!staffInRows[i].name}
+                onDragStart={e => onDragStart('staffIn', i, e)}
+                onDragEnd={onDragEnd}
+              >
                 {i < staffInRows.length ? (
                   <>
                     <input className="ledger-input-name" list="staff-list"
@@ -676,11 +848,16 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                       value={staffInRows[i].amount}
                       onChange={e => updateSectionRow('staffIn', i, 'amount', e.target.value)}
                     />
+                    <button className="ledger-del-btn" onClick={() => deleteSectionRow('staffIn', EMPTY_PERSON_ROW, i)} title="Delete">✕</button>
                   </>
                 ) : <div className="ledger-cell-placeholder" />}
               </div>
               <div className="ledger-center-divider" />
-              <div className={`ledger-entry-cell${staffActiveOut ? ' ledger-cell--speaking' : ''}`}>
+              <div className={`ledger-entry-cell${staffActiveOut ? ' ledger-cell--speaking' : ''}`}
+                draggable={i < staffOutRows.length && !!staffOutRows[i].name}
+                onDragStart={e => onDragStart('staffOut', i, e)}
+                onDragEnd={onDragEnd}
+              >
                 {i < staffOutRows.length ? (
                   <>
                     <input className="ledger-input-name" list="staff-list"
@@ -692,6 +869,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                       value={staffOutRows[i].amount}
                       onChange={e => updateSectionRow('staffOut', i, 'amount', e.target.value)}
                     />
+                    <button className="ledger-del-btn" onClick={() => deleteSectionRow('staffOut', EMPTY_PERSON_ROW, i)} title="Delete">✕</button>
                   </>
                 ) : <div className="ledger-cell-placeholder" />}
               </div>
@@ -707,8 +885,14 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             <div className="ledger-center-divider" />
             <button className="ledger-add-btn" onClick={() => addSectionRow('staffOut', EMPTY_PERSON_ROW)}>+ Staff row</button>
           </div>
+          </div>{/* end STAFF drop zone */}
 
           {/* ══ OTHERS section ══ */}
+          <div className={`ledger-section-drop-zone${dropTarget === 'othersIn' || dropTarget === 'othersOut' ? ' ledger-section--drop-active' : ''}`}
+            onDragOver={e => { e.preventDefault(); const rect = e.currentTarget.getBoundingClientRect(); setDropTarget(e.clientX < rect.left + rect.width/2 ? 'othersIn' : 'othersOut') }}
+            onDragLeave={onDragLeave}
+            onDrop={() => handleDrop(dropTarget || 'othersIn')}
+          >
           <div className="ledger-section-divider">
             <div className="ledger-section-label">🔖 Others (In)</div>
             <div className="ledger-center-divider" />
@@ -719,7 +903,11 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             const othActiveOut = speakingIdx?.side === 'out' && speakingIdx.section === 'others' && speakingIdx.rowIdx === i
             return (
             <div key={`others-${i}`} className="ledger-data-row">
-              <div className={`ledger-entry-cell${othActiveIn ? ' ledger-cell--speaking' : ''}`}>
+              <div className={`ledger-entry-cell${othActiveIn ? ' ledger-cell--speaking' : ''}`}
+                draggable={i < othersInRows.length && !!othersInRows[i].name}
+                onDragStart={e => onDragStart('othersIn', i, e)}
+                onDragEnd={onDragEnd}
+              >
                 {i < othersInRows.length ? (
                   <>
                     <input className="ledger-input-name" list="others-list"
@@ -731,11 +919,16 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                       value={othersInRows[i].amount}
                       onChange={e => updateSectionRow('othersIn', i, 'amount', e.target.value)}
                     />
+                    <button className="ledger-del-btn" onClick={() => deleteSectionRow('othersIn', EMPTY_PERSON_ROW, i)} title="Delete">✕</button>
                   </>
                 ) : <div className="ledger-cell-placeholder" />}
               </div>
               <div className="ledger-center-divider" />
-              <div className={`ledger-entry-cell${othActiveOut ? ' ledger-cell--speaking' : ''}`}>
+              <div className={`ledger-entry-cell${othActiveOut ? ' ledger-cell--speaking' : ''}`}
+                draggable={i < othersOutRows.length && !!othersOutRows[i].name}
+                onDragStart={e => onDragStart('othersOut', i, e)}
+                onDragEnd={onDragEnd}
+              >
                 {i < othersOutRows.length ? (
                   <>
                     <input className="ledger-input-name" list="others-list"
@@ -747,6 +940,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                       value={othersOutRows[i].amount}
                       onChange={e => updateSectionRow('othersOut', i, 'amount', e.target.value)}
                     />
+                    <button className="ledger-del-btn" onClick={() => deleteSectionRow('othersOut', EMPTY_PERSON_ROW, i)} title="Delete">✕</button>
                   </>
                 ) : <div className="ledger-cell-placeholder" />}
               </div>
@@ -762,6 +956,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             <div className="ledger-center-divider" />
             <button className="ledger-add-btn" onClick={() => addSectionRow('othersOut', EMPTY_PERSON_ROW)}>+ Others row</button>
           </div>
+          </div>{/* end OTHERS drop zone */}
 
           {/* Totals */}
           <div className="ledger-totals-row">

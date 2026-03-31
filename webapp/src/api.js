@@ -85,6 +85,13 @@ export async function fetchStaff(phone) {
   return r.json()
 }
 
+export async function fetchExpenseCategories(phone) {
+  const r = await fetch(`${BASE}/expense-categories?phone=${encodeURIComponent(phone)}`)
+  if (!r.ok) return { categories: [] }
+  return r.json()
+  // returns { categories: [{tag, label, emoji, count}] }
+}
+
 export async function confirmTransactions(phone, transactions, botMessageId = null, originalTransactions = null) {
   const r = await fetch(`${BASE}/confirm`, {
     method: 'POST',
