@@ -1,366 +1,1351 @@
-import { useState, useEffect } from 'react'
-import { fetchDues, fetchStaff, updateDuesContact, fetchPersonDuesHistory } from '../api.js'
-import { t } from '../translations.js'
+import { useState, useEffect } from "react";
+import {
+  fetchDues,
+  fetchStaff,
+  updateDuesContact,
+  fetchPersonDuesHistory,
+} from "../api.js";
+import { t } from "../translations.js";
 
 function fmtRs(val) {
-  const n = parseFloat(val) || 0
-  return `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
+  const n = parseFloat(val) || 0;
+  return `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
 }
 
 function fmtDate(d) {
-  if (!d) return '—'
-  return new Date(d + 'T00:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: '2-digit' })
+  if (!d) return "—";
+  return new Date(d + "T00:00:00").toLocaleDateString("en-IN", {
+    day: "numeric",
+    month: "short",
+    year: "2-digit",
+  });
 }
 
 function daysColor(days) {
-  if (days > 60) return '#D32F2F'
-  if (days > 30) return '#E64A19'
-  return '#F57C00'
+  if (days > 60) return "#D32F2F";
+  if (days > 30) return "#E64A19";
+  return "#F57C00";
 }
 
-/* ── Date helpers ────────────────────────────────────────── */
-function toISO(d) { return d.toISOString().slice(0, 10) }
+function toISO(d) {
+  return d.toISOString().slice(0, 10);
+}
 function getRange(period) {
-  const today = new Date()
-  if (period === 'month') return { start: toISO(new Date(today.getFullYear(), today.getMonth(), 1)), end: toISO(today) }
-  if (period === 'quarter') {
-    const qm = Math.floor(today.getMonth() / 3) * 3
-    return { start: toISO(new Date(today.getFullYear(), qm, 1)), end: toISO(today) }
+  const today = new Date();
+  if (period === "month")
+    return {
+      start: toISO(new Date(today.getFullYear(), today.getMonth(), 1)),
+      end: toISO(today),
+    };
+  if (period === "quarter") {
+    const qm = Math.floor(today.getMonth() / 3) * 3;
+    return {
+      start: toISO(new Date(today.getFullYear(), qm, 1)),
+      end: toISO(today),
+    };
   }
-  if (period === 'year') return { start: toISO(new Date(today.getFullYear(), 0, 1)), end: toISO(today) }
-  return { start: null, end: null } // 'all'
+  if (period === "year")
+    return {
+      start: toISO(new Date(today.getFullYear(), 0, 1)),
+      end: toISO(today),
+    };
+  return { start: null, end: null };
 }
 
 const PERIOD_LABELS = [
-  { key: 'month',   label: 'This Month' },
-  { key: 'quarter', label: 'Quarter' },
-  { key: 'year',    label: 'Year' },
-  { key: 'all',     label: 'All Time' },
-]
+  { key: "month", label: "This Month" },
+  { key: "quarter", label: "Quarter" },
+  { key: "year", label: "Year" },
+  { key: "all", label: "All Time" },
+];
 
+// ── Avatar icon based on name ────────────────────────────────
+function AvatarIcon({ name }) {
+  const words = (name || "").trim().split(/\s+/);
+  const isOrg =
+    words.length > 1 &&
+    /store|enterprises|pvt|ltd|co\.|trading|shop|mart|general/i.test(name);
+  const bg = isOrg ? "#E8EAF6" : "#E3F2FD";
+  const icon = isOrg ? (
+    // Store icon
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+      <path
+        d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"
+        stroke="#00695C"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M9 22V12h6v10"
+        stroke="#00695C"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  ) : (
+    // Person icon
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+      <path
+        d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"
+        stroke="#00695C"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle
+        cx="12"
+        cy="7"
+        r="4"
+        stroke="#00695C"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+  return (
+    <div
+      style={{
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        background: bg,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+      }}
+    >
+      {icon}
+    </div>
+  );
+}
 
-// ── Full ledger for one customer ────────────────────────────────
+// ── Extract name from description ────────────────────────────
+function extractNameFromDesc(desc) {
+  if (!desc) return null;
+  const m = desc.match(/\b(?:from|to)\s+([A-Z][a-zA-Z]+(?: [A-Z][a-zA-Z]+)*)/i);
+  if (m) return m[1].trim();
+  const stripped = desc.trim();
+  if (
+    stripped.length > 0 &&
+    stripped.split(" ").length <= 4 &&
+    !/received|paid|dues|amount|rs|₹/i.test(stripped)
+  )
+    return stripped;
+  return null;
+}
+
+function cleanDesc(desc, personName) {
+  if (!desc) return "Payment received";
+  if (personName && desc.toLowerCase().includes(personName.toLowerCase())) {
+    return (
+      desc
+        .replace(new RegExp(`\\s*(?:from|to)\\s+${personName}`, "i"), "")
+        .replace(/\s+dated[\s\d\-\/]+$/i, "")
+        .trim() || "Payment received"
+    );
+  }
+  return desc;
+}
+
+// ── Pending dues card ────────────────────────────────────────
 function DuesCard({ due, phone, language, onContactSaved }) {
-  const [expanded,  setExpanded]  = useState(false)
-  const [history,   setHistory]   = useState(null)
-  const [loadingH,  setLoadingH]  = useState(false)
-  const [editing,   setEditing]   = useState(false)
-  const [contact,   setContact]   = useState('')
-  const [saving,    setSaving]    = useState(false)
+  const [expanded, setExpanded] = useState(false);
+  const [history, setHistory] = useState(null);
+  const [loadingH, setLoadingH] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [contact, setContact] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  const days  = due.days_overdue || 0
-  const color = daysColor(days)
+  const days = due.days_overdue || 0;
+  const color = daysColor(days);
 
   async function toggleExpand() {
     if (!expanded && !history) {
-      setLoadingH(true)
+      setLoadingH(true);
       try {
-        const res = await fetchPersonDuesHistory(phone, due.person_name)
-        setHistory(res)
+        const res = await fetchPersonDuesHistory(phone, due.person_name);
+        setHistory(res);
       } catch {
-        setHistory({ transactions: [] })
+        setHistory({ transactions: [] });
       } finally {
-        setLoadingH(false)
+        setLoadingH(false);
       }
     }
-    setExpanded(e => !e)
+    setExpanded((e) => !e);
   }
 
   async function handleSaveContact(e) {
-    e.preventDefault()
-    if (!contact.replace(/\D/g, '').length) return
-    setSaving(true)
+    e.preventDefault();
+    if (!contact.replace(/\D/g, "").length) return;
+    setSaving(true);
     try {
-      await onContactSaved(due.person_name, contact)
-      setEditing(false)
+      await onContactSaved(due.person_name, contact);
+      setEditing(false);
     } catch (err) {
-      alert('Could not save: ' + err.message)
+      alert("Could not save: " + err.message);
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
   }
 
-  const txns = history?.transactions || []
+  const txns = history?.transactions || [];
 
   return (
-    <div className="dues-card">
-      <div className="dues-card-top" onClick={toggleExpand} style={{ cursor: 'pointer' }}>
-        <div>
-          <div className="dues-name">{due.person_name}</div>
-          {due.phone
-            ? <a href={`tel:${due.phone}`} className="dues-phone" onClick={e => e.stopPropagation()}>📞 {due.phone}</a>
-            : <span className="dues-phone" style={{ color: '#bbb' }}>{t('no_contact', language)}</span>
-          }
-        </div>
-        <div className="dues-right">
-          <div className="dues-amount">{fmtRs(due.balance)}</div>
-          <div className="dues-days" style={{ color }}>
-            {days > 0 ? `${days} ${t('days_ago', language)}` : t('today_label', language)}
+    <div
+      style={{
+        background: "#fff",
+        borderRadius: 14,
+        marginBottom: 10,
+        boxShadow: "0 2px 8px rgba(0,0,0,0.07)",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        onClick={toggleExpand}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          padding: "13px 14px",
+          cursor: "pointer",
+        }}
+      >
+        <AvatarIcon name={due.person_name} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 15, color: "#111" }}>
+            {due.person_name}
           </div>
-          <span style={{ fontSize: 11, color: '#aaa', marginTop: 2 }}>
-            {expanded ? t('hide_label', language) : t('ledger_label', language)}
-          </span>
+          {/*<div style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>
+            {due.phone ? (
+              <a
+                href={`tel:${due.phone}`}
+                style={{ color: "#00695C", textDecoration: "none" }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                📞 {due.phone}
+              </a>
+            ) : (
+              <span style={{ color: "#bbb" }}>{t("no_contact", language)}</span>
+            )}
+          </div>*/}
+          {/* Given / Paid pills */}
+          {(due.total_given > 0 || due.total_received > 0) && (
+            <div style={{ display: "flex", gap: 6, marginTop: 5 }}>
+              <span
+                style={{
+                  fontSize: 10,
+                  background: "#FFF3E0",
+                  color: "#E65100",
+                  fontWeight: 700,
+                  borderRadius: 5,
+                  padding: "2px 7px",
+                }}
+              >
+                Given {fmtRs(due.total_given)}
+              </span>
+              {due.total_received > 0 && (
+                <span
+                  style={{
+                    fontSize: 10,
+                    background: "#E8F5E9",
+                    color: "#2E7D32",
+                    fontWeight: 700,
+                    borderRadius: 5,
+                    padding: "2px 7px",
+                  }}
+                >
+                  Paid {fmtRs(due.total_received)}
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontWeight: 800, fontSize: 16, color: "#E53935" }}>
+            {fmtRs(due.balance)}
+          </div>
+          <div style={{ fontSize: 10, color, fontWeight: 600, marginTop: 2 }}>
+            {days > 0 ? `${days}d overdue` : "Today"}
+          </div>
+          <div style={{ fontSize: 10, color: "#ccc", marginTop: 2 }}>
+            {expanded ? "▲" : "▼"}
+          </div>
         </div>
       </div>
 
-      {/* Add contact */}
+      {/* Add contact 
       {!due.phone && !editing && !expanded && (
-        <button className="add-contact-btn" onClick={() => setEditing(true)}>
-          {t('add_contact', language)}
-        </button>
-      )}
+        <div style={{ padding: "0 14px 10px" }}>
+          <button
+            onClick={() => setEditing(true)}
+            style={{
+              fontSize: 11,
+              color: "#00695C",
+              background: "#E8F5E9",
+              border: "none",
+              borderRadius: 6,
+              padding: "4px 10px",
+              cursor: "pointer",
+              fontWeight: 600,
+            }}
+          >
+            + Add contact
+          </button>
+        </div>
+      )}*/}
       {editing && (
-        <form className="contact-form" onSubmit={handleSaveContact}>
-          <input type="tel" inputMode="numeric" maxLength={10} placeholder="10 digit number"
-            value={contact} onChange={e => setContact(e.target.value.replace(/\D/g,'').slice(0,10))}
-            className="contact-input" />
-          <button type="submit" className="contact-save-btn" disabled={saving}>{saving ? '...' : 'Save'}</button>
-          <button type="button" className="contact-cancel-btn" onClick={() => setEditing(false)}>✕</button>
+        <form
+          onSubmit={handleSaveContact}
+          style={{
+            display: "flex",
+            gap: 6,
+            padding: "0 14px 10px",
+            alignItems: "center",
+          }}
+        >
+          <input
+            type="tel"
+            inputMode="numeric"
+            maxLength={10}
+            placeholder="10 digit number"
+            value={contact}
+            onChange={(e) =>
+              setContact(e.target.value.replace(/\D/g, "").slice(0, 10))
+            }
+            style={{
+              flex: 1,
+              padding: "6px 10px",
+              borderRadius: 8,
+              border: "1px solid #ddd",
+              fontSize: 13,
+            }}
+          />
+          <button
+            type="submit"
+            disabled={saving}
+            style={{
+              background: "#00695C",
+              color: "#fff",
+              border: "none",
+              borderRadius: 8,
+              padding: "6px 12px",
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            {saving ? "..." : "Save"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditing(false)}
+            style={{
+              background: "#f5f5f5",
+              border: "none",
+              borderRadius: 8,
+              padding: "6px 10px",
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            ✕
+          </button>
         </form>
       )}
 
-      {/* Full ledger */}
+      {/* Expanded ledger */}
       {expanded && (
-        <div className="dues-ledger">
+        <div
+          style={{ borderTop: "1px solid #f5f5f5", padding: "8px 14px 10px" }}
+        >
           {loadingH ? (
-            <p className="dues-ledger-loading">{t('loading', language)}</p>
+            <div style={{ fontSize: 12, color: "#aaa", padding: "6px 0" }}>
+              {t("loading", language)}
+            </div>
           ) : txns.length === 0 ? (
-            <p className="dues-ledger-empty">{t('no_history', language)}</p>
+            <div style={{ fontSize: 12, color: "#aaa", padding: "6px 0" }}>
+              {t("no_history", language)}
+            </div>
           ) : (
-            <table className="dues-ledger-table">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Description</th>
-                  <th className="dl-num">Amount</th>
-                  <th className="dl-num">{t('outstanding', language)}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {txns.map((txn, i) => {
-                  const isGiven = txn.type === 'given'
-                  return (
-                    <tr key={i} className={isGiven ? 'dl-row-given' : 'dl-row-received'}>
-                      <td className="dl-date">{fmtDate(txn.date)}</td>
-                      <td className="dl-desc">
-                        <span className={`dl-badge ${isGiven ? 'dl-badge-given' : 'dl-badge-rcvd'}`}>
-                          {isGiven ? t('given_badge', language) : t('received_badge', language)}
-                        </span>
-                        {txn.description || (isGiven ? t('udhaar_given', language) : t('udhaar_received', language))}
-                      </td>
-                      <td className={`dl-num dl-amt ${isGiven ? 'dl-amt-given' : 'dl-amt-rcvd'}`}>
-                        {isGiven ? '+' : '−'}{fmtRs(txn.amount)}
-                      </td>
-                      <td className="dl-num dl-bal">{fmtRs(txn.running_bal)}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="dl-foot">
-                  <td colSpan={3} style={{ textAlign: 'right', fontWeight: 600 }}>{t('outstanding', language)}:</td>
-                  <td className="dl-num" style={{ fontWeight: 700, color: '#E53935' }}>{fmtRs(due.balance)}</td>
-                </tr>
-              </tfoot>
-            </table>
+            txns.map((txn, i) => {
+              const isGiven = txn.type === "given";
+              return (
+                <div
+                  key={i}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    padding: "6px 0",
+                    borderBottom:
+                      i < txns.length - 1 ? "1px solid #f5f5f5" : "none",
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div
+                      style={{ display: "flex", alignItems: "center", gap: 5 }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          borderRadius: 4,
+                          padding: "1px 5px",
+                          background: isGiven ? "#FFF3E0" : "#E8F5E9",
+                          color: isGiven ? "#E65100" : "#2E7D32",
+                        }}
+                      >
+                        {isGiven
+                          ? t("given_badge", language)
+                          : t("received_badge", language)}
+                      </span>
+                      <span style={{ fontSize: 12, color: "#555" }}>
+                        {txn.description ||
+                          (isGiven
+                            ? t("udhaar_given", language)
+                            : t("udhaar_received", language))}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 11, color: "#bbb", marginTop: 2 }}>
+                      {fmtDate(txn.date)}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right", marginLeft: 8 }}>
+                    <div
+                      style={{
+                        fontWeight: 700,
+                        fontSize: 13,
+                        color: isGiven ? "#E65100" : "#2E7D32",
+                      }}
+                    >
+                      {isGiven ? "+" : "−"}
+                      {fmtRs(txn.amount)}
+                    </div>
+                    <div style={{ fontSize: 10, color: "#aaa" }}>
+                      bal: {fmtRs(txn.running_bal)}
+                    </div>
+                  </div>
+                </div>
+              );
+            })
           )}
-
-          {/* Add contact from within ledger */}
           {!due.phone && !editing && (
-            <button className="add-contact-btn" style={{ marginTop: 8 }} onClick={() => setEditing(true)}>
-              {t('add_contact', language)}
+            <button
+              onClick={() => setEditing(true)}
+              style={{
+                marginTop: 8,
+                fontSize: 11,
+                color: "#00695C",
+                background: "#E8F5E9",
+                border: "none",
+                borderRadius: 6,
+                padding: "4px 10px",
+                cursor: "pointer",
+                fontWeight: 600,
+              }}
+            >
+              + Add contact
             </button>
           )}
         </div>
       )}
     </div>
-  )
+  );
 }
 
+// ── Received card ────────────────────────────────────────────
+function ReceivedCard({ rec }) {
+  const [expanded, setExpanded] = useState(false);
 
-// ── Staff card (updated for net total) ──────────────────────
-function StaffCard({ member, language }) {
-  const [expanded, setExpanded] = useState(false)
-  const isNeg = member.net_total < 0
+  // Extract clean name — person_name may still be a full sentence if migration hasn't run
+  const rawName = rec.person_name || "";
+  const displayName =
+    rawName.split(" ").length > 3 || /dues|given|received|dated/i.test(rawName)
+      ? extractNameFromDesc(rawName) ||
+        extractNameFromDesc(rec.recent?.[0]?.description || "") ||
+        rawName
+      : rawName ||
+        extractNameFromDesc(rec.recent?.[0]?.description || "") ||
+        "Unknown";
+
+  const hasPending = rec.net_pending > 0;
 
   return (
-    <div className="staff-card">
-      <div className="staff-card-top" onClick={() => setExpanded(!expanded)}>
-        <div className="staff-card-left">
-          <div className="staff-name">👷 {member.name}</div>
-          <div className="staff-meta">
-            {(member.recent_payments || []).length} transaction{(member.recent_payments || []).length !== 1 ? 's' : ''} in period
-          </div>
+    <div
+      style={{
+        background: "#fff",
+        borderRadius: 14,
+        marginBottom: 10,
+        boxShadow: "0 2px 8px rgba(0,0,0,0.07)",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        onClick={() => setExpanded((e) => !e)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          padding: "13px 14px",
+          cursor: rec.recent?.length > 0 ? "pointer" : "default",
+        }}
+      >
+        {/* Green check circle */}
+        <div
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 22,
+            background: "#E8F5E9",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+          }}
+        >
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <circle cx="12" cy="12" r="10" fill="#43A047" />
+            <path
+              d="M8 12l3 3 5-5"
+              stroke="#fff"
+              strokeWidth="2.2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </div>
-        <div className="staff-right">
-          <div className="staff-total" style={{ color: isNeg ? '#2E7D32' : '#E65100' }}>
-            {isNeg ? '+' : ''}{fmtRs(Math.abs(member.net_total))}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 15, color: "#111" }}>
+            {displayName}
           </div>
-          <div className="staff-sublabel" style={{ color: isNeg ? '#4CAF50' : '#999' }}>
-            {isNeg ? 'received more' : 'net paid'}
+          <div style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>
+            {rec.txn_count} payment{rec.txn_count !== 1 ? "s" : ""} received ·
+            Last: {fmtDate(rec.last_date)}
           </div>
-          <span className="expand-icon">{expanded ? '▲' : '▼'}</span>
+          {hasPending ? (
+            <span
+              style={{
+                fontSize: 10,
+                background: "#FFF3E0",
+                color: "#E65100",
+                fontWeight: 700,
+                borderRadius: 5,
+                padding: "2px 7px",
+                marginTop: 4,
+                display: "inline-block",
+              }}
+            >
+              ⏳ Still pending {fmtRs(rec.net_pending)}
+            </span>
+          ) : (
+            <span
+              style={{
+                fontSize: 10,
+                background: "#E8F5E9",
+                color: "#2E7D32",
+                fontWeight: 700,
+                borderRadius: 5,
+                padding: "2px 7px",
+                marginTop: 4,
+                display: "inline-block",
+              }}
+            >
+              ✅ Fully cleared
+            </span>
+          )}
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontWeight: 800, fontSize: 16, color: "#2E7D32" }}>
+            +{fmtRs(rec.total_received)}
+          </div>
+          {rec.recent?.length > 0 && (
+            <div style={{ fontSize: 10, color: "#ccc", marginTop: 4 }}>
+              {expanded ? "▲" : "▼"}
+            </div>
+          )}
         </div>
       </div>
 
       {expanded && (
-        <div className="staff-expanded">
-          {member.recent_payments && member.recent_payments.length > 0 ? (
-            <div className="staff-section">
-              <div className="staff-section-title">Recent Transactions</div>
-              {member.recent_payments.map((p, i) => {
-                const isReceipt = p.type === 'receipt'
-                return (
-                  <div key={i} className="staff-payment-row">
-                    <span className="staff-pay-date">{p.date}</span>
-                    <span className="staff-pay-desc">{p.description || (isReceipt ? 'Received' : 'Payment')}</span>
-                    <span className="staff-pay-amt" style={{ color: isReceipt ? '#2E7D32' : '#E65100' }}>
-                      {isReceipt ? '+' : '−'}{fmtRs(p.amount)}
-                    </span>
-                  </div>
-                )
-              })}
+        <div
+          style={{ borderTop: "1px solid #f5f5f5", padding: "8px 14px 10px" }}
+        >
+          {/* Dues given row — when credit was originally extended */}
+          {rec.dues_given_date && (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "5px 0",
+                borderBottom: "1px solid #f5f5f5",
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 12, color: "#888" }}>
+                  Dues given to {displayName}
+                </div>
+                <div style={{ fontSize: 11, color: "#bbb" }}>
+                  {fmtDate(rec.dues_given_date)}
+                </div>
+              </div>
+              <div style={{ fontWeight: 700, fontSize: 13, color: "#E65100" }}>
+                −{fmtRs(rec.dues_given_amount || rec.total_received)}
+              </div>
             </div>
+          )}
+          {/* Payment received rows */}
+          {(rec.recent || []).map((txn, i) => (
+            <div
+              key={i}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "5px 0",
+                borderBottom:
+                  i < rec.recent.length - 1 ? "1px solid #f5f5f5" : "none",
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 12, color: "#555" }}>
+                  Payment received
+                </div>
+                <div style={{ fontSize: 11, color: "#bbb" }}>
+                  {fmtDate(txn.date)}
+                </div>
+              </div>
+              <div style={{ fontWeight: 700, fontSize: 13, color: "#2E7D32" }}>
+                +{fmtRs(txn.amount)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Staff card ───────────────────────────────────────────────
+function StaffCard({ member, language }) {
+  const [expanded, setExpanded] = useState(false);
+  const isNeg = member.net_total < 0;
+  return (
+    <div
+      style={{
+        background: "#fff",
+        borderRadius: 14,
+        marginBottom: 10,
+        boxShadow: "0 2px 8px rgba(0,0,0,0.07)",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        onClick={() => setExpanded(!expanded)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          padding: "13px 14px",
+          cursor: "pointer",
+        }}
+      >
+        <div
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 22,
+            background: "#FFF3E0",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+          }}
+        >
+          <span style={{ fontSize: 22 }}>👷</span>
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 15, color: "#111" }}>
+            {member.name}
+          </div>
+          <div style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>
+            {(member.recent_payments || []).length} transaction
+            {(member.recent_payments || []).length !== 1 ? "s" : ""} in period
+          </div>
+        </div>
+        <div style={{ textAlign: "right" }}>
+          <div
+            style={{
+              fontWeight: 800,
+              fontSize: 16,
+              color: isNeg ? "#2E7D32" : "#E65100",
+            }}
+          >
+            {isNeg ? "+" : "−"}
+            {fmtRs(Math.abs(member.net_total))}
+          </div>
+          <div style={{ fontSize: 10, color: "#aaa", marginTop: 2 }}>
+            {isNeg ? "received" : "net paid"}
+          </div>
+          <div style={{ fontSize: 10, color: "#ccc", marginTop: 2 }}>
+            {expanded ? "▲" : "▼"}
+          </div>
+        </div>
+      </div>
+      {expanded && (
+        <div
+          style={{ borderTop: "1px solid #f5f5f5", padding: "8px 14px 10px" }}
+        >
+          {member.recent_payments?.length > 0 ? (
+            member.recent_payments.map((p, i) => {
+              const isReceipt = p.type === "receipt";
+              return (
+                <div
+                  key={i}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    padding: "5px 0",
+                    borderBottom:
+                      i < member.recent_payments.length - 1
+                        ? "1px solid #f5f5f5"
+                        : "none",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: 12, color: "#555" }}>
+                      {p.description || (isReceipt ? "Received" : "Payment")}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#bbb" }}>{p.date}</div>
+                  </div>
+                  <div
+                    style={{
+                      fontWeight: 700,
+                      fontSize: 13,
+                      color: isReceipt ? "#2E7D32" : "#E65100",
+                    }}
+                  >
+                    {isReceipt ? "+" : "−"}
+                    {fmtRs(p.amount)}
+                  </div>
+                </div>
+              );
+            })
           ) : (
-            <p className="staff-empty">{t('no_payments', language)}</p>
+            <div style={{ fontSize: 12, color: "#aaa" }}>
+              {t("no_payments", language)}
+            </div>
           )}
         </div>
       )}
     </div>
-  )
+  );
 }
 
-
-// ── Main DuesPage ────────────────────────────────────────────────
-export default function DuesPage({ phone, storeName, language = 'hinglish' }) {
-  const [tab,     setTab]     = useState('dues')
-  const [period,  setPeriod]  = useState('all')
-  const [dues,    setDues]    = useState([])
-  const [staff,   setStaff]   = useState([])
-  const [loading, setLoading] = useState(false)
-  const [error,   setError]   = useState(null)
+// ── Main DuesPage ────────────────────────────────────────────
+export default function DuesPage({ phone, storeName, language = "hinglish" }) {
+  const [tab, setTab] = useState("dues");
+  const [period, setPeriod] = useState("all");
+  const [dues, setDues] = useState([]);
+  const [duesReceived, setDuesReceived] = useState([]);
+  const [staff, setStaff] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [showAllPending, setShowAllPending] = useState(false);
+  const [showAllReceived, setShowAllReceived] = useState(false);
 
   useEffect(() => {
     async function load() {
-      setLoading(true)
-      setError(null)
+      setLoading(true);
+      setError(null);
       try {
-        if (tab === 'dues') {
-          const res = await fetchDues(phone)
-          setDues(res.dues || [])
+        if (tab === "dues") {
+          const { start, end } = getRange(period);
+          const res = await fetchDues(phone, start, end);
+          setDues(res.dues || []);
+          setDuesReceived(res.dues_received || []);
         } else {
-          const { start, end } = getRange(period)
-          const res = await fetchStaff(phone, start, end)
-          setStaff(res.staff || [])
+          const { start, end } = getRange(period);
+          const res = await fetchStaff(phone, start, end);
+          setStaff(res.staff || []);
         }
       } catch (e) {
-        setError(e.message)
+        setError(e.message);
       } finally {
-        setLoading(false)
+        setLoading(false);
       }
     }
-    load()
-  }, [phone, tab, period])
+    load();
+  }, [phone, tab, period]);
 
   async function handleContactSaved(personName, contactPhone) {
-    await updateDuesContact(phone, personName, contactPhone)
-    const res = await fetchDues(phone)
-    setDues(res.dues || [])
+    await updateDuesContact(phone, personName, contactPhone);
+    const { start, end } = getRange(period);
+    const res = await fetchDues(phone, start, end);
+    setDues(res.dues || []);
+    setDuesReceived(res.dues_received || []);
   }
 
-  const totalDues = dues.reduce((s, d) => s + (d.balance || 0), 0)
-  const totalStaffExpense = staff.reduce((s, m) => s + (m.net_total > 0 ? m.net_total : 0), 0)
-  const totalStaffReceived = staff.reduce((s, m) => s + (m.net_total < 0 ? Math.abs(m.net_total) : 0), 0)
+  const totalPending = dues.reduce((s, d) => s + (d.balance || 0), 0);
+  const totalReceived = duesReceived.reduce(
+    (s, r) => s + (r.total_received || 0),
+    0,
+  );
+  const totalOutstanding = totalPending;
+  const totalTxnsPending = dues.reduce(
+    (s, d) => s + (d.recent_transactions?.length || 1),
+    0,
+  );
+  const totalStaffExpense = staff.reduce(
+    (s, m) => s + (m.net_total > 0 ? m.net_total : 0),
+    0,
+  );
+  const totalStaffReceived = staff.reduce(
+    (s, m) => s + (m.net_total < 0 ? Math.abs(m.net_total) : 0),
+    0,
+  );
+
+  const PREVIEW = 3;
+  const visiblePending = showAllPending ? dues : dues.slice(0, PREVIEW);
+  const visibleReceived = showAllReceived
+    ? duesReceived
+    : duesReceived.slice(0, PREVIEW);
 
   return (
-    <div className="dues-page">
-      <div className="chat-header">
-        <div className="header-avatar">👥</div>
-        <div className="header-info">
-          <div className="header-name">{storeName || 'Dues & Staff'}</div>
-          <div className="header-status">{t('dues_status', language)}</div>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        background: "#F4F6F8",
+        overflow: "hidden",
+      }}
+    >
+      {/* ── Header ── */}
+      <div
+        style={{
+          background: "#00695C",
+          padding: "14px 16px 10px",
+          flexShrink: 0,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 12,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div
+              style={{
+                width: 38,
+                height: 38,
+                borderRadius: 19,
+                background: "rgba(255,255,255,0.15)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <span style={{ fontSize: 20 }}>👤</span>
+            </div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 16, color: "#fff" }}>
+                {storeName || "Dues & Staff"}
+              </div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>
+                {t("dues_status", language)}
+              </div>
+            </div>
+          </div>
+          <div
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: 17,
+              background: "rgba(255,255,255,0.12)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <span style={{ fontSize: 18 }}>🔔</span>
+          </div>
+        </div>
+
+        {/* Tabs inside header */}
+        <div
+          style={{
+            display: "flex",
+            background: "rgba(255,255,255,0.1)",
+            borderRadius: 10,
+            padding: 3,
+          }}
+        >
+          {[
+            { key: "dues", label: "Udhaar / Dues" },
+            { key: "staff", label: "Staff" },
+          ].map((tb) => (
+            <button
+              key={tb.key}
+              onClick={() => setTab(tb.key)}
+              style={{
+                flex: 1,
+                padding: "7px 0",
+                borderRadius: 8,
+                border: "none",
+                cursor: "pointer",
+                fontWeight: 700,
+                fontSize: 13,
+                background: tab === tb.key ? "#fff" : "transparent",
+                color: tab === tb.key ? "#00695C" : "rgba(255,255,255,0.7)",
+                transition: "all 0.15s",
+              }}
+            >
+              {tb.label}
+            </button>
+          ))}
         </div>
       </div>
 
       {/* ── Period selector ── */}
-      <div style={{
-        display: 'flex', gap: 6, padding: '8px 12px', background: '#f5f5f5',
-        borderBottom: '1px solid #e0e0e0', overflowX: 'auto', flexShrink: 0,
-      }}>
-        {PERIOD_LABELS.map(p => (
-          <button key={p.key} onClick={() => setPeriod(p.key)} style={{
-            padding: '5px 12px', borderRadius: 16, border: 'none', fontSize: 12, fontWeight: 600,
-            background: period === p.key ? '#00695C' : '#fff',
-            color: period === p.key ? '#fff' : '#555',
-            boxShadow: period === p.key ? '0 2px 6px rgba(0,105,92,0.3)' : '0 1px 3px rgba(0,0,0,0.08)',
-            cursor: 'pointer', whiteSpace: 'nowrap',
-          }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 6,
+          padding: "8px 12px",
+          background: "#fff",
+          borderBottom: "1px solid #eee",
+          overflowX: "auto",
+          flexShrink: 0,
+        }}
+      >
+        {PERIOD_LABELS.map((p) => (
+          <button
+            key={p.key}
+            onClick={() => setPeriod(p.key)}
+            style={{
+              padding: "5px 13px",
+              borderRadius: 16,
+              border: "none",
+              fontSize: 12,
+              fontWeight: 600,
+              background: period === p.key ? "#00695C" : "#F0F0F0",
+              color: period === p.key ? "#fff" : "#555",
+              cursor: "pointer",
+              whiteSpace: "nowrap",
+            }}
+          >
             {p.label}
           </button>
         ))}
       </div>
 
-      <div className="dues-tabs">
-        <button className={`dues-tab ${tab === 'dues' ? 'active' : ''}`} onClick={() => setTab('dues')}>
-          {t('tab_dues', language)}
-        </button>
-        <button className={`dues-tab ${tab === 'staff' ? 'active' : ''}`} onClick={() => setTab('staff')}>
-          {t('tab_staff', language)}
-        </button>
-      </div>
+      {/* ── Scrollable body ── */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "14px 14px 80px" }}>
+        {loading && (
+          <div style={{ textAlign: "center", padding: 32, color: "#aaa" }}>
+            {t("loading", language)}
+          </div>
+        )}
+        {error && (
+          <div style={{ textAlign: "center", padding: 16, color: "#E53935" }}>
+            ⚠️ {error}
+          </div>
+        )}
 
-      <div className="dues-body">
-        {loading && <div className="dues-loading">{t('loading', language)}</div>}
-        {error   && <div className="dues-error">⚠️ {error}</div>}
-
-        {!loading && !error && tab === 'dues' && (
+        {/* ══ DUES TAB ══ */}
+        {!loading && !error && tab === "dues" && (
           <>
-            {dues.length === 0 ? (
-              <div className="dues-empty">{t('no_dues', language)}</div>
-            ) : (
-              <>
-                <div className="dues-total-banner">
-                  <span>{t('total_outstanding', language)}</span>
-                  <span style={{ fontWeight: 700, color: '#E53935' }}>{fmtRs(totalDues)}</span>
+            {/* Total Outstanding dark card */}
+            <div
+              style={{
+                background: "linear-gradient(135deg, #00695C 0%, #00897B 100%)",
+                borderRadius: 16,
+                padding: "20px 20px 18px",
+                marginBottom: 14,
+                boxShadow: "0 4px 16px rgba(26,35,126,0.3)",
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 11,
+                  color: "rgba(255,255,255,0.6)",
+                  fontWeight: 700,
+                  letterSpacing: 1.2,
+                  marginBottom: 6,
+                }}
+              >
+                TOTAL OUTSTANDING
+              </div>
+              <div
+                style={{
+                  fontSize: 34,
+                  fontWeight: 800,
+                  color: "#fff",
+                  letterSpacing: -1,
+                }}
+              >
+                {fmtRs(totalOutstanding)}
+              </div>
+              {dues.length > 0 && (
+                <div
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    marginTop: 10,
+                    background: "rgba(255,255,255,0.12)",
+                    borderRadius: 20,
+                    padding: "4px 10px",
+                  }}
+                >
+                  <span style={{ fontSize: 12 }}>👥</span>
+                  <span
+                    style={{
+                      fontSize: 12,
+                      color: "rgba(255,255,255,0.85)",
+                      fontWeight: 600,
+                    }}
+                  >
+                    {dues.length} {dues.length === 1 ? "person" : "people"}{" "}
+                    pending
+                  </span>
                 </div>
-                {dues.map(d => (
-                  <DuesCard key={d.person_name} due={d} phone={phone} language={language} onContactSaved={handleContactSaved} />
+              )}
+            </div>
+
+            {/* Pending + Received summary cards */}
+            <div style={{ display: "flex", gap: 10, marginBottom: 18 }}>
+              <div
+                style={{
+                  flex: 1,
+                  background: "#fff",
+                  borderRadius: 14,
+                  padding: "14px 16px",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+                }}
+              >
+                <div
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 16,
+                    background: "#FFEBEE",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    marginBottom: 8,
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M12 19V5M5 12l7-7 7 7"
+                      stroke="#E53935"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </div>
+                <div
+                  style={{
+                    fontSize: 10,
+                    color: "#E53935",
+                    fontWeight: 700,
+                    letterSpacing: 1,
+                  }}
+                >
+                  PENDING
+                </div>
+                <div
+                  style={{
+                    fontSize: 20,
+                    fontWeight: 800,
+                    color: "#E53935",
+                    marginTop: 2,
+                  }}
+                >
+                  {fmtRs(totalPending)}
+                </div>
+              </div>
+              <div
+                style={{
+                  flex: 1,
+                  background: "#fff",
+                  borderRadius: 14,
+                  padding: "14px 16px",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+                }}
+              >
+                <div
+                  style={{
+                    width: 32,
+                    height: 32,
+                    borderRadius: 16,
+                    background: "#E8F5E9",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    marginBottom: 8,
+                  }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="9" fill="#43A047" />
+                    <path
+                      d="M8 12l3 3 5-5"
+                      stroke="#fff"
+                      strokeWidth="2.2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </div>
+                <div
+                  style={{
+                    fontSize: 10,
+                    color: "#2E7D32",
+                    fontWeight: 700,
+                    letterSpacing: 1,
+                  }}
+                >
+                  RECEIVED
+                </div>
+                <div
+                  style={{
+                    fontSize: 20,
+                    fontWeight: 800,
+                    color: "#2E7D32",
+                    marginTop: 2,
+                  }}
+                >
+                  {fmtRs(totalReceived)}
+                </div>
+              </div>
+            </div>
+
+            {/* ── Pending Dues ── */}
+            {dues.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "baseline",
+                    justifyContent: "space-between",
+                    marginBottom: 10,
+                  }}
+                >
+                  <div>
+                    <div
+                      style={{ fontWeight: 800, fontSize: 16, color: "#111" }}
+                    >
+                      Pending Dues
+                    </div>
+                    <div style={{ fontSize: 12, color: "#999", marginTop: 1 }}>
+                      {totalTxnsPending} transaction
+                      {totalTxnsPending !== 1 ? "s" : ""} pending
+                    </div>
+                  </div>
+                  {dues.length > PREVIEW && (
+                    <button
+                      onClick={() => setShowAllPending((v) => !v)}
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 700,
+                        color: "#00695C",
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {showAllPending ? "SHOW LESS" : "VIEW ALL"}
+                    </button>
+                  )}
+                </div>
+                {visiblePending.map((d) => (
+                  <DuesCard
+                    key={d.person_name}
+                    due={d}
+                    phone={phone}
+                    language={language}
+                    onContactSaved={handleContactSaved}
+                  />
                 ))}
-              </>
+              </div>
+            )}
+
+            {/* ── Recently Received ── */}
+            {duesReceived.length > 0 && (
+              <div style={{ marginBottom: 20 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "baseline",
+                    justifyContent: "space-between",
+                    marginBottom: 10,
+                  }}
+                >
+                  <div>
+                    <div
+                      style={{
+                        fontWeight: 800,
+                        fontSize: 16,
+                        color: "#2E7D32",
+                      }}
+                    >
+                      Recently Received
+                    </div>
+                    <div style={{ fontSize: 12, color: "#999", marginTop: 1 }}>
+                      {period === "all"
+                        ? "All time"
+                        : PERIOD_LABELS.find((p) => p.key === period)?.label}
+                    </div>
+                  </div>
+                  {duesReceived.length > PREVIEW && (
+                    <button
+                      onClick={() => setShowAllReceived((v) => !v)}
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 700,
+                        color: "#2E7D32",
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                      }}
+                    >
+                      {showAllReceived ? "SHOW LESS" : "VIEW ALL"}
+                    </button>
+                  )}
+                </div>
+                {visibleReceived.map((r) => (
+                  <ReceivedCard key={r.person_name} rec={r} />
+                ))}
+              </div>
+            )}
+
+            {dues.length === 0 && duesReceived.length === 0 && (
+              <div
+                style={{
+                  textAlign: "center",
+                  padding: "40px 20px",
+                  color: "#aaa",
+                }}
+              >
+                <div style={{ fontSize: 40, marginBottom: 12 }}>🎉</div>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>No dues!</div>
+                <div style={{ fontSize: 13, marginTop: 4 }}>
+                  All clear — no pending udhaar
+                </div>
+              </div>
             )}
           </>
         )}
 
-        {!loading && !error && tab === 'staff' && (
+        {/* ══ STAFF TAB ══ */}
+        {!loading && !error && tab === "staff" && (
           <>
+            {/* Staff summary */}
+            <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+              <div
+                style={{
+                  flex: 1,
+                  background: "#fff",
+                  borderRadius: 14,
+                  padding: "14px 16px",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 10,
+                    color: "#E65100",
+                    fontWeight: 700,
+                    letterSpacing: 1,
+                  }}
+                >
+                  PAID OUT
+                </div>
+                <div
+                  style={{
+                    fontSize: 20,
+                    fontWeight: 800,
+                    color: "#E65100",
+                    marginTop: 2,
+                  }}
+                >
+                  {fmtRs(totalStaffExpense)}
+                </div>
+              </div>
+              <div
+                style={{
+                  flex: 1,
+                  background: "#fff",
+                  borderRadius: 14,
+                  padding: "14px 16px",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.06)",
+                }}
+              >
+                <div
+                  style={{
+                    fontSize: 10,
+                    color: "#00695C",
+                    fontWeight: 700,
+                    letterSpacing: 1,
+                  }}
+                >
+                  NET
+                </div>
+                <div
+                  style={{
+                    fontSize: 20,
+                    fontWeight: 800,
+                    color: "#00695C",
+                    marginTop: 2,
+                  }}
+                >
+                  {fmtRs(totalStaffExpense - totalStaffReceived)}
+                </div>
+              </div>
+            </div>
+
             {staff.length === 0 ? (
-              <div className="dues-empty">{t('no_staff', language)}</div>
+              <div
+                style={{
+                  textAlign: "center",
+                  padding: "40px 20px",
+                  color: "#aaa",
+                }}
+              >
+                <div style={{ fontSize: 40, marginBottom: 12 }}>👷</div>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>
+                  No staff records
+                </div>
+              </div>
             ) : (
               <>
-                {/* Staff totals banner */}
-                <div style={{
-                  display: 'flex', justifyContent: 'space-between', padding: '10px 14px',
-                  background: '#FFF3E0', borderRadius: 10, margin: '8px 0 12px', fontSize: 13,
-                }}>
-                  <div>
-                    <div style={{ color: '#999', fontSize: 10, fontWeight: 600 }}>PAID</div>
-                    <div style={{ fontWeight: 700, color: '#E65100' }}>{fmtRs(totalStaffExpense)}</div>
-                  </div>
-                  <div style={{ textAlign: 'center' }}>
-                    <div style={{ color: '#999', fontSize: 10, fontWeight: 600 }}>RECEIVED</div>
-                    <div style={{ fontWeight: 700, color: '#2E7D32' }}>{fmtRs(totalStaffReceived)}</div>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ color: '#999', fontSize: 10, fontWeight: 600 }}>NET</div>
-                    <div style={{ fontWeight: 700, color: '#1a1a1a' }}>{fmtRs(totalStaffExpense - totalStaffReceived)}</div>
-                  </div>
+                <div
+                  style={{
+                    fontWeight: 800,
+                    fontSize: 16,
+                    color: "#111",
+                    marginBottom: 10,
+                  }}
+                >
+                  Staff Members
                 </div>
-                {staff.map(s => <StaffCard key={s.name} member={s} language={language} />)}
+                {staff.map((s) => (
+                  <StaffCard key={s.name} member={s} language={language} />
+                ))}
               </>
             )}
           </>
         )}
       </div>
     </div>
-  )
+  );
 }

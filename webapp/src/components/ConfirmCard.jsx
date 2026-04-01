@@ -1,6 +1,15 @@
 import { useState } from 'react'
 import { quickParse } from '../api.js'
 
+// Extract clean person name from a value that might be a full sentence
+// e.g. "Dues received from Sanjiv Mishra" → "Sanjiv Mishra"
+function extractDisplayName(name) {
+  if (!name) return ''
+  const m = name.match(/\b(?:from|to)\s+([A-Z][a-zA-Z]+(?: [A-Z][a-zA-Z]+)*)/i)
+  if (m) return m[1].trim()
+  return name
+}
+
 export const TYPE_OPTIONS = [
   { value: 'sale',             label: '💰 Sale' },
   { value: 'expense',          label: '💸 Expense' },
@@ -187,7 +196,7 @@ function TxnCard({ txn, index, onChange, onDelete }) {
         </div>
         <div className="txn-desc">{txn.description || '—'}</div>
         <div className="txn-footer-row">
-          {txn.person_name && <span className="txn-person">👤 {txn.person_name}</span>}
+          {txn.person_name && <span className="txn-person">👤 {extractDisplayName(txn.person_name)}</span>}
           {txn.tag && txn.type === 'expense' && (
             <span className="txn-tag">🏷️ {txn.tag.replace(/_/g, ' ')}</span>
           )}
