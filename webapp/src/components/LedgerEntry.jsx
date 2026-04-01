@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { classifyLedger, speakLedger, fetchDues, fetchStaff, fetchExpenseCategories } from '../api.js'
+import { t } from '../translations.js'
 
 const EMPTY_ROW      = () => ({ particulars: '', amount: '', tag: '', _txn: null })
 const EMPTY_DUES_ROW = () => ({ desc: '', billNo: '', amount: '' })
@@ -95,10 +96,15 @@ function _browserSpeak(inRows, outRows, dateStr, language) {
     gujarati: 'gu-IN', marathi: 'mr-IN', bengali: 'bn-IN',
     tamil: 'ta-IN', telugu: 'te-IN', kannada: 'kn-IN', punjabi: 'pa-IN' }
 
-  let text = `Notebook mein ${validIn.length + validOut.length} entries. `
-  validIn .forEach((r, i) => { text += `Jama ${i+1}: ${r.particulars}, ${r.amount}. ` })
-  validOut.forEach((r, i) => { text += `Naam ${i+1}: ${r.particulars}, ${r.amount}. ` })
-  text += `Date check karein: ${dateStr}.`
+  const lang = language || 'hinglish'
+  const jamaWord = t('tts_jama', lang)
+  const naamWord = t('tts_naam', lang)
+  const entriesWord = t('tts_notebook_entries', lang)
+  const dateCheck = t('tts_date_check', lang)
+  let text = `${validIn.length + validOut.length} ${entriesWord}. `
+  validIn .forEach((r, i) => { text += `${jamaWord} ${i+1}: ${r.particulars}, ${r.amount}. ` })
+  validOut.forEach((r, i) => { text += `${naamWord} ${i+1}: ${r.particulars}, ${r.amount}. ` })
+  text += `${dateCheck}: ${dateStr}.`
 
   const utt = new SpeechSynthesisUtterance(text)
   utt.lang = langMap[language] || 'hi-IN'
@@ -589,14 +595,14 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
         {/* ── Header bar ── */}
         <div className="ledger-header">
           <span className="ledger-title">
-            {isPrefill ? '📋 Review Entries' : '📒 Khata Bahi'}
+            {isPrefill ? `📋 ${t('review_entries', language)}` : `📒 ${t('khata_bahi', language)}`}
           </span>
           {isPrefill && (
             <>
               <button
                 className={`ledger-speak-btn${speaking ? ' ledger-speak-btn--active' : ''}`}
                 onClick={handleSpeak}
-                aria-label="Read entries aloud"
+                aria-label={t('speak_tooltip', language)}
                 disabled={audioMuted}
               >
                 {speaking ? '🔊' : '🔈'}
@@ -610,13 +616,13 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                   }
                   setAudioMuted(m => !m)
                 }}
-                aria-label={audioMuted ? 'Enable audio' : 'Mute audio'}
+                aria-label={audioMuted ? t('unmute_tooltip', language) : t('mute_tooltip', language)}
               >
                 {audioMuted ? '🔇' : '🔉'}
               </button>
             </>
           )}
-          <button className="ledger-close-btn" onClick={requestClose} aria-label="Close">✕</button>
+          <button className="ledger-close-btn" onClick={requestClose} aria-label={t('cancel', language)}>✕</button>
         </div>
 
         {/* ── Date banner ── */}
@@ -632,25 +638,25 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
           {/* Column headers */}
           <div className="ledger-col-header-row">
             <div className="ledger-col-header ledger-jama-header">
-              <span className="ledger-col-label-hindi">जमा</span>
-              <span className="ledger-col-label-en">JAMA (IN)</span>
+              <span className="ledger-col-label-hindi">{t('tts_jama', language)}</span>
+              <span className="ledger-col-label-en">{t('jama_in', language)}</span>
             </div>
             <div className="ledger-center-divider" />
             <div className="ledger-col-header ledger-naam-header">
-              <span className="ledger-col-label-hindi">नाम</span>
-              <span className="ledger-col-label-en">NAAM (OUT)</span>
+              <span className="ledger-col-label-hindi">{t('tts_naam', language)}</span>
+              <span className="ledger-col-label-en">{t('naam_out', language)}</span>
             </div>
           </div>
 
           {/* Sub-header */}
           <div className="ledger-sub-header">
             <div className="ledger-subh-cell">
-              <span className="ledger-subh-desc">Particulars</span>
+              <span className="ledger-subh-desc">{t('description_ph', language)}</span>
               <span className="ledger-subh-amt">₹</span>
             </div>
             <div className="ledger-center-divider" />
             <div className="ledger-subh-cell">
-              <span className="ledger-subh-desc">Particulars</span>
+              <span className="ledger-subh-desc">{t('description_ph', language)}</span>
               <span className="ledger-subh-amt">₹</span>
             </div>
           </div>
@@ -675,7 +681,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                     <>
                       <textarea
                         className="ledger-input-desc"
-                        placeholder="Description"
+                        placeholder={t('description_ph', language)}
                         rows={1}
                         value={inRows[i].particulars}
                         onChange={e => updateRow('in', i, 'particulars', e.target.value)}
@@ -690,7 +696,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                         onChange={e => updateRow('in', i, 'amount', e.target.value)}
                         onKeyDown={e => handleAmtKeyDown('in', i, e)}
                       />
-                      <button className="ledger-del-btn" onClick={() => deleteRow('in', i)} title="Delete">✕</button>
+                      <button className="ledger-del-btn" onClick={() => deleteRow('in', i)} title={t('cancel', language)}>✕</button>
                     </>
                   ) : <div className="ledger-cell-placeholder" />}
                 </div>
@@ -706,7 +712,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                     <>
                       <textarea
                         className="ledger-input-desc"
-                        placeholder="Description"
+                        placeholder={t('description_ph', language)}
                         rows={1}
                         value={outRows[i].particulars}
                         onChange={e => updateRow('out', i, 'particulars', e.target.value)}
@@ -721,7 +727,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                         onChange={e => updateRow('out', i, 'amount', e.target.value)}
                         onKeyDown={e => handleAmtKeyDown('out', i, e)}
                       />
-                      <button className="ledger-del-btn" onClick={() => deleteRow('out', i)} title="Delete">✕</button>
+                      <button className="ledger-del-btn" onClick={() => deleteRow('out', i)} title={t('cancel', language)}>✕</button>
                     </>
                   ) : <div className="ledger-cell-placeholder" />}
                 </div>
@@ -734,9 +740,9 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
 
           {/* Add row buttons — general section */}
           <div className="ledger-add-row">
-            <button className="ledger-add-btn" onClick={() => addRow('in')}>+ Add row</button>
+            <button className="ledger-add-btn" onClick={() => addRow('in')}>{t('add_row', language)}</button>
             <div className="ledger-center-divider" />
-            <button className="ledger-add-btn" onClick={() => addRow('out')}>+ Add row</button>
+            <button className="ledger-add-btn" onClick={() => addRow('out')}>{t('add_row', language)}</button>
           </div>
 
           {/* ══ DUES section ══ */}
@@ -746,9 +752,9 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             onDrop={() => handleDrop(dropTarget || 'duesIn')}
           >
           <div className="ledger-section-divider">
-            <div className="ledger-section-label">📥 Dues Received</div>
+            <div className="ledger-section-label">📥 {t('section_dues_received', language)}</div>
             <div className="ledger-center-divider" />
-            <div className="ledger-section-label">📤 Dues Given</div>
+            <div className="ledger-section-label">📤 {t('section_dues_given', language)}</div>
           </div>
           {Array.from({ length: Math.max(duesInRows.length, duesOutRows.length) }).map((_, i) => {
             const duesActiveIn  = speakingIdx?.side === 'in'  && speakingIdx.section === 'dues' && speakingIdx.rowIdx === i
@@ -763,7 +769,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                 {i < duesInRows.length ? (
                   <>
                     <input className="ledger-input-desc ledger-input-desc--dues"
-                      placeholder="Description"
+                      placeholder={t('description_ph', language)}
                       value={duesInRows[i].desc}
                       onChange={e => updateSectionRow('duesIn', i, 'desc', e.target.value)}
                     />
@@ -776,7 +782,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                       value={duesInRows[i].amount}
                       onChange={e => updateSectionRow('duesIn', i, 'amount', e.target.value)}
                     />
-                    <button className="ledger-del-btn" onClick={() => deleteSectionRow('duesIn', EMPTY_DUES_ROW, i)} title="Delete">✕</button>
+                    <button className="ledger-del-btn" onClick={() => deleteSectionRow('duesIn', EMPTY_DUES_ROW, i)} title={t('cancel', language)}>✕</button>
                   </>
                 ) : <div className="ledger-cell-placeholder" />}
               </div>
@@ -789,7 +795,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                 {i < duesOutRows.length ? (
                   <>
                     <input className="ledger-input-desc ledger-input-desc--dues"
-                      placeholder="Description"
+                      placeholder={t('description_ph', language)}
                       value={duesOutRows[i].desc}
                       onChange={e => updateSectionRow('duesOut', i, 'desc', e.target.value)}
                     />
@@ -802,7 +808,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                       value={duesOutRows[i].amount}
                       onChange={e => updateSectionRow('duesOut', i, 'amount', e.target.value)}
                     />
-                    <button className="ledger-del-btn" onClick={() => deleteSectionRow('duesOut', EMPTY_DUES_ROW, i)} title="Delete">✕</button>
+                    <button className="ledger-del-btn" onClick={() => deleteSectionRow('duesOut', EMPTY_DUES_ROW, i)} title={t('cancel', language)}>✕</button>
                   </>
                 ) : <div className="ledger-cell-placeholder" />}
               </div>
@@ -810,9 +816,9 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             )
           })}
           <div className="ledger-add-row">
-            <button className="ledger-add-btn" onClick={() => addSectionRow('duesIn', EMPTY_DUES_ROW)}>+ Dues row</button>
+            <button className="ledger-add-btn" onClick={() => addSectionRow('duesIn', EMPTY_DUES_ROW)}>{t('add_dues_row', language)}</button>
             <div className="ledger-center-divider" />
-            <button className="ledger-add-btn" onClick={() => addSectionRow('duesOut', EMPTY_DUES_ROW)}>+ Dues row</button>
+            <button className="ledger-add-btn" onClick={() => addSectionRow('duesOut', EMPTY_DUES_ROW)}>{t('add_dues_row', language)}</button>
           </div>
           </div>{/* end DUES drop zone */}
 
@@ -823,9 +829,9 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             onDrop={() => handleDrop(dropTarget || 'staffIn')}
           >
           <div className="ledger-section-divider">
-            <div className="ledger-section-label">👷 Staff (In)</div>
+            <div className="ledger-section-label">👷 {t('staff_in_label', language)}</div>
             <div className="ledger-center-divider" />
-            <div className="ledger-section-label">👷 Staff Expense</div>
+            <div className="ledger-section-label">👷 {t('staff_expense_label', language)}</div>
           </div>
           {Array.from({ length: Math.max(staffInRows.length, staffOutRows.length) }).map((_, i) => {
             const staffActiveIn  = speakingIdx?.side === 'in'  && speakingIdx.section === 'staff' && speakingIdx.rowIdx === i
@@ -840,7 +846,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                 {i < staffInRows.length ? (
                   <>
                     <input className="ledger-input-name" list="staff-list"
-                      placeholder="Staff name"
+                      placeholder={t('staff_name_ph', language)}
                       value={staffInRows[i].name}
                       onChange={e => updateSectionRow('staffIn', i, 'name', e.target.value)}
                     />
@@ -848,7 +854,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                       value={staffInRows[i].amount}
                       onChange={e => updateSectionRow('staffIn', i, 'amount', e.target.value)}
                     />
-                    <button className="ledger-del-btn" onClick={() => deleteSectionRow('staffIn', EMPTY_PERSON_ROW, i)} title="Delete">✕</button>
+                    <button className="ledger-del-btn" onClick={() => deleteSectionRow('staffIn', EMPTY_PERSON_ROW, i)} title={t('cancel', language)}>✕</button>
                   </>
                 ) : <div className="ledger-cell-placeholder" />}
               </div>
@@ -861,7 +867,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                 {i < staffOutRows.length ? (
                   <>
                     <input className="ledger-input-name" list="staff-list"
-                      placeholder="Staff name"
+                      placeholder={t('staff_name_ph', language)}
                       value={staffOutRows[i].name}
                       onChange={e => updateSectionRow('staffOut', i, 'name', e.target.value)}
                     />
@@ -869,7 +875,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                       value={staffOutRows[i].amount}
                       onChange={e => updateSectionRow('staffOut', i, 'amount', e.target.value)}
                     />
-                    <button className="ledger-del-btn" onClick={() => deleteSectionRow('staffOut', EMPTY_PERSON_ROW, i)} title="Delete">✕</button>
+                    <button className="ledger-del-btn" onClick={() => deleteSectionRow('staffOut', EMPTY_PERSON_ROW, i)} title={t('cancel', language)}>✕</button>
                   </>
                 ) : <div className="ledger-cell-placeholder" />}
               </div>
@@ -881,9 +887,9 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             {staffOptions.map(n => <option key={n} value={n} />)}
           </datalist>
           <div className="ledger-add-row">
-            <button className="ledger-add-btn" onClick={() => addSectionRow('staffIn',  EMPTY_PERSON_ROW)}>+ Staff row</button>
+            <button className="ledger-add-btn" onClick={() => addSectionRow('staffIn',  EMPTY_PERSON_ROW)}>{t('add_staff_row', language)}</button>
             <div className="ledger-center-divider" />
-            <button className="ledger-add-btn" onClick={() => addSectionRow('staffOut', EMPTY_PERSON_ROW)}>+ Staff row</button>
+            <button className="ledger-add-btn" onClick={() => addSectionRow('staffOut', EMPTY_PERSON_ROW)}>{t('add_staff_row', language)}</button>
           </div>
           </div>{/* end STAFF drop zone */}
 
@@ -894,9 +900,9 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             onDrop={() => handleDrop(dropTarget || 'othersIn')}
           >
           <div className="ledger-section-divider">
-            <div className="ledger-section-label">🔖 Others (In)</div>
+            <div className="ledger-section-label">🔖 {t('others_in_label', language)}</div>
             <div className="ledger-center-divider" />
-            <div className="ledger-section-label">🔖 Others (Out)</div>
+            <div className="ledger-section-label">🔖 {t('others_out_label', language)}</div>
           </div>
           {Array.from({ length: Math.max(othersInRows.length, othersOutRows.length) }).map((_, i) => {
             const othActiveIn  = speakingIdx?.side === 'in'  && speakingIdx.section === 'others' && speakingIdx.rowIdx === i
@@ -911,7 +917,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                 {i < othersInRows.length ? (
                   <>
                     <input className="ledger-input-name" list="others-list"
-                      placeholder="Name"
+                      placeholder={t('name_ph', language)}
                       value={othersInRows[i].name}
                       onChange={e => updateSectionRow('othersIn', i, 'name', e.target.value)}
                     />
@@ -919,7 +925,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                       value={othersInRows[i].amount}
                       onChange={e => updateSectionRow('othersIn', i, 'amount', e.target.value)}
                     />
-                    <button className="ledger-del-btn" onClick={() => deleteSectionRow('othersIn', EMPTY_PERSON_ROW, i)} title="Delete">✕</button>
+                    <button className="ledger-del-btn" onClick={() => deleteSectionRow('othersIn', EMPTY_PERSON_ROW, i)} title={t('cancel', language)}>✕</button>
                   </>
                 ) : <div className="ledger-cell-placeholder" />}
               </div>
@@ -932,7 +938,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                 {i < othersOutRows.length ? (
                   <>
                     <input className="ledger-input-name" list="others-list"
-                      placeholder="Name"
+                      placeholder={t('name_ph', language)}
                       value={othersOutRows[i].name}
                       onChange={e => updateSectionRow('othersOut', i, 'name', e.target.value)}
                     />
@@ -940,7 +946,7 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
                       value={othersOutRows[i].amount}
                       onChange={e => updateSectionRow('othersOut', i, 'amount', e.target.value)}
                     />
-                    <button className="ledger-del-btn" onClick={() => deleteSectionRow('othersOut', EMPTY_PERSON_ROW, i)} title="Delete">✕</button>
+                    <button className="ledger-del-btn" onClick={() => deleteSectionRow('othersOut', EMPTY_PERSON_ROW, i)} title={t('cancel', language)}>✕</button>
                   </>
                 ) : <div className="ledger-cell-placeholder" />}
               </div>
@@ -952,23 +958,23 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             {othersOptions.map(n => <option key={n} value={n} />)}
           </datalist>
           <div className="ledger-add-row">
-            <button className="ledger-add-btn" onClick={() => addSectionRow('othersIn',  EMPTY_PERSON_ROW)}>+ Others row</button>
+            <button className="ledger-add-btn" onClick={() => addSectionRow('othersIn',  EMPTY_PERSON_ROW)}>{t('add_others_row', language)}</button>
             <div className="ledger-center-divider" />
-            <button className="ledger-add-btn" onClick={() => addSectionRow('othersOut', EMPTY_PERSON_ROW)}>+ Others row</button>
+            <button className="ledger-add-btn" onClick={() => addSectionRow('othersOut', EMPTY_PERSON_ROW)}>{t('add_others_row', language)}</button>
           </div>
           </div>{/* end OTHERS drop zone */}
 
           {/* Totals */}
           <div className="ledger-totals-row">
             <div className="ledger-total-cell">
-              <span className="ledger-total-label">Total JAMA</span>
+              <span className="ledger-total-label">{t('total_jama', language)}</span>
               <span className="ledger-total-amt ledger-total-in">
                 ₹{totalIn.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
               </span>
             </div>
             <div className="ledger-center-divider" />
             <div className="ledger-total-cell">
-              <span className="ledger-total-label">Total NAAM</span>
+              <span className="ledger-total-label">{t('total_naam', language)}</span>
               <span className="ledger-total-amt ledger-total-out">
                 ₹{totalOut.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
               </span>
@@ -984,15 +990,15 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             disabled={!hasEntries || loading}
           >
             {loading
-              ? <><span className="ledger-spinner" /> {isPrefill ? 'Saving…' : 'Classifying…'}</>
+              ? <><span className="ledger-spinner" /> {isPrefill ? t('saving_text', language) : t('classifying_text', language)}</>
               : isPrefill
-                ? `✅ Save All (${totalCount})`
-                : '🤖 Classify & Review'}
+                ? `✅ ${t('save_all_count', language)} (${totalCount})`
+                : `🤖 ${t('classify_review', language)}`}
           </button>
           <div className="ledger-entry-count">
             {hasEntries
-              ? `${totalCount} entr${totalCount === 1 ? 'y' : 'ies'} ready`
-              : isPrefill ? 'Edit entries above' : 'Fill in entries above'}
+              ? `${totalCount} ${totalCount === 1 ? t('entry_ready', language) : t('entries_ready', language)}`
+              : isPrefill ? t('edit_entries_above', language) : t('fill_entries_above', language)}
           </div>
         </div>
 
@@ -1002,15 +1008,15 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
             <div className="ledger-confirm-box">
               <p className="ledger-confirm-msg">
                 {isPrefill
-                  ? 'Band karo? Abhi tak ki saari entries kho jayengi.'
-                  : 'Band karo? Bhari hui entries kho jayengi.'}
+                  ? t('close_confirm_prefill', language)
+                  : t('close_confirm_manual', language)}
               </p>
               <div className="ledger-confirm-btns">
                 <button className="ledger-confirm-cancel" onClick={() => setShowConfirm(false)}>
-                  Wapas jao
+                  {t('go_back', language)}
                 </button>
                 <button className="ledger-confirm-ok" onClick={doClose}>
-                  Haan, band karo
+                  {t('yes_close', language)}
                 </button>
               </div>
             </div>

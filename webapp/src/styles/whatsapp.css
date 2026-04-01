@@ -1885,16 +1885,8 @@ html, body, #root {
 .ledger-paper {
   flex: 1;
   overflow-y: auto;
-  /* Cream paper with ruled lines */
   background-color: #fef9f0;
-  background-image: repeating-linear-gradient(
-    to bottom,
-    transparent 0px,
-    transparent 33px,
-    #ddd0b5 33px,
-    #ddd0b5 34px
-  );
-  background-attachment: local;
+  /* Rows draw their own border-bottom for perfect alignment */
 }
 
 /* ── Column header row ── */
@@ -1964,8 +1956,8 @@ html, body, #root {
 .ledger-data-row {
   display: flex;
   align-items: stretch;
-  min-height: 34px;
-  border-bottom: 1px solid transparent; /* lines come from paper background */
+  min-height: 36px;
+  border-bottom: 1px solid #ddd0b5;
 }
 .ledger-data-row:nth-child(even) {
   background: rgba(255,255,255,0.3);
@@ -2185,12 +2177,7 @@ html, body, #root {
 
 .review-ledger-grid {
   background: #fef9f0;
-  background-image: repeating-linear-gradient(
-    to bottom,
-    transparent 0px, transparent 37px,
-    #ddd0b5 37px, #ddd0b5 38px
-  );
-  background-attachment: local;
+  /* No background ruled lines — rows draw their own borders for perfect alignment */
 }
 
 /* Column headers */

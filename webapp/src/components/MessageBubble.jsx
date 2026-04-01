@@ -9,6 +9,7 @@ import { useState } from 'react'
 import ConfirmCard from './ConfirmCard.jsx'
 import PhotoReviewCard from './PhotoReviewCard.jsx'
 import { deleteTransaction } from '../api.js'
+import { t } from '../translations.js'
 
 // ── Inline formatting ──────────────────────────────────────────
 function formatText(text) {
@@ -40,19 +41,23 @@ const SC_COLORS = {
   opening_balance:'#607D8B', closing_balance:'#607D8B',
   cash_in_hand:'#607D8B', upi_in_hand:'#2196F3', other:'#78909C',
 }
-const SC_LABELS = {
-  sale:'💰 Sale', receipt:'📨 Receipt', dues_given:'📤 Dues Given', udhaar_given:'📤 Dues Given',
-  dues_received:'📥 Dues Received', udhaar_received:'📥 Dues Received', expense:'💸 Expense',
-  bank_deposit:'🏦 Bank', opening_balance:'🔓 Opening', closing_balance:'🔒 Closing',
-  cash_in_hand:'💵 Cash', upi_in_hand:'📱 UPI', other:'📋 Other',
+const SC_LABEL_KEYS = {
+  sale:'type_sale', receipt:'type_receipt', dues_given:'type_dues_given', udhaar_given:'type_dues_given',
+  dues_received:'type_dues_received', udhaar_received:'type_dues_received', expense:'type_expense',
+  bank_deposit:'type_bank_deposit', opening_balance:'type_opening_bal', closing_balance:'type_closing_bal',
+  cash_in_hand:'type_cash_in_hand', upi_in_hand:'type_upi_in_hand', other:'type_other',
+}
+function getSCLabel(type, language) {
+  const key = SC_LABEL_KEYS[type]
+  return key ? t(key, language) : type
 }
 const SC_IN  = new Set(['sale','receipt','dues_received','udhaar_received','cash_in_hand','upi_in_hand','opening_balance'])
 const SC_OUT = new Set(['expense','dues_given','udhaar_given','bank_deposit','closing_balance'])
 
-function SavedCell({ txn, onDelete }) {
+function SavedCell({ txn, onDelete, language }) {
   if (!txn) return <div className="sc-cell-empty" />
   const color = SC_COLORS[txn.type] || '#94a3b8'
-  const label = SC_LABELS[txn.type] || txn.type
+  const label = getSCLabel(txn.type, language)
   const hideLabel = txn.type === 'other'
   return (
     <div className="sc-cell" style={{ borderLeftColor: color }}>
@@ -67,7 +72,7 @@ function SavedCell({ txn, onDelete }) {
   )
 }
 
-function SavedCard({ transactions: initialTxns, phone }) {
+function SavedCard({ transactions: initialTxns, phone, language }) {
   const [txns, setTxns] = useState(initialTxns || [])
 
   async function handleDelete(txnId) {
@@ -111,29 +116,29 @@ function SavedCard({ transactions: initialTxns, phone }) {
 
       {/* 2-column grid */}
       <div className="sc-col-headers">
-        <div className="sc-col-label sc-jama-label">जमा IN</div>
+        <div className="sc-col-label sc-jama-label">{t('jama_in', language)}</div>
         <div className="sc-vdivider" />
-        <div className="sc-col-label sc-naam-label">नाम OUT</div>
+        <div className="sc-col-label sc-naam-label">{t('naam_out', language)}</div>
       </div>
 
       <div className="sc-grid-rows">
         {Array.from({ length: maxRows }).map((_, i) => (
           <div key={i} className="sc-grid-row">
             <div className="sc-col">
-              <SavedCell txn={inEntries[i] ?? null} onDelete={handleDelete} />
+              <SavedCell txn={inEntries[i] ?? null} onDelete={handleDelete} language={language} />
             </div>
             <div className="sc-vdivider" />
             <div className="sc-col">
-              <SavedCell txn={outEntries[i] ?? null} onDelete={handleDelete} />
+              <SavedCell txn={outEntries[i] ?? null} onDelete={handleDelete} language={language} />
             </div>
           </div>
         ))}
       </div>
 
       {/* Other entries (spanning full width) */}
-      {otherEntries.map((t, i) => (
+      {otherEntries.map((txn, i) => (
         <div key={`other-${i}`} className="sc-other-row">
-          <SavedCell txn={t} onDelete={handleDelete} />
+          <SavedCell txn={txn} onDelete={handleDelete} language={language} />
         </div>
       ))}
 
@@ -154,7 +159,7 @@ function SavedCard({ transactions: initialTxns, phone }) {
 }
 
 // ── Main MessageBubble ──────────────────────────────────────────
-export default function MessageBubble({ msg, phone, onConfirm, onCancel, onPendingEdit, onOpenLedger }) {
+export default function MessageBubble({ msg, phone, onConfirm, onCancel, onPendingEdit, onOpenLedger, language }) {
   const { direction, body, media_url, created_at, metadata } = msg
   const isUser = direction === 'user'
 
@@ -166,12 +171,12 @@ export default function MessageBubble({ msg, phone, onConfirm, onCancel, onPendi
   // Photo-sourced messages have metadata.display — use the richer PhotoReviewCard
   const isPhotoSource  = !isUser && !!metadata?.display
 
-  // Low-confidence detection: avg confidence < 55 across all entries → image unclear
+  // Low-confidence detection: avg confidence < 70 across all entries → image unclear
   const isLowConfImage = isPhotoSource && (() => {
     const txns = pendingTxns || []
     if (!txns.length) return true  // no entries parsed = completely unreadable
     const avg = txns.reduce((s, t) => s + (t.confidence ?? 100), 0) / txns.length
-    return avg < 55
+    return avg < 70
   })()
 
   const showLowConfWarning = isLowConfImage && onConfirm
@@ -212,11 +217,11 @@ export default function MessageBubble({ msg, phone, onConfirm, onCancel, onPendi
           <div className="low-conf-warning">
             <div className="low-conf-icon">⚠️</div>
             <div className="low-conf-text">
-              <b>Image not clear</b><br/>
-              <span>Could not read entries reliably. Please add details manually.</span>
+              <b>{t('low_conf_title', language)}</b><br/>
+              <span>{t('low_conf_body', language)}</span>
             </div>
             <button className="low-conf-btn" onClick={() => { onCancel?.(); onOpenLedger?.() }}>
-              📋 Enter Manually
+              {t('low_conf_btn', language)}
             </button>
           </div>
         )}
@@ -228,12 +233,12 @@ export default function MessageBubble({ msg, phone, onConfirm, onCancel, onPendi
 
         {/* Confirm card — text-sourced transactions */}
         {showConfirmCard && (
-          <ConfirmCard metadata={metadata} onConfirm={onConfirm} onCancel={onCancel} onPendingEdit={onPendingEdit} />
+          <ConfirmCard metadata={metadata} onConfirm={onConfirm} onCancel={onCancel} onPendingEdit={onPendingEdit} language={language} />
         )}
 
         {/* Saved card (confirmed entries with delete buttons) */}
         {showSavedCard && (
-          <SavedCard transactions={confirmedTxns} phone={phone} createdAt={created_at} />
+          <SavedCard transactions={confirmedTxns} phone={phone} createdAt={created_at} language={language} />
         )}
 
         {/* Timestamp + ticks */}

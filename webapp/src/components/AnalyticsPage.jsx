@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { fetchAnalytics } from "../api.js";
+import { t } from "../translations.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -125,16 +126,16 @@ function MiniBars({ pct, color }) {
 
 // ── Edit label modal ──────────────────────────────────────────────────────────
 
-const PERIODS = [
-  { key: "day", label: "Today" },
-  { key: "week", label: "Week" },
-  { key: "month", label: "Month" },
-  { key: "year", label: "Year" },
+const PERIOD_KEYS = [
+  { key: "day", tKey: "period_today" },
+  { key: "week", tKey: "period_week" },
+  { key: "month", tKey: "period_month" },
+  { key: "year", tKey: "period_year" },
 ];
 
 // ── Date range picker modal ───────────────────────────────────────────────────
 
-function DateRangeModal({ onApply, onClose }) {
+function DateRangeModal({ onApply, onClose, language }) {
   const today = new Date().toISOString().slice(0, 10);
   const [from, setFrom] = useState(today);
   const [to, setTo] = useState(today);
@@ -168,12 +169,12 @@ function DateRangeModal({ onApply, onClose }) {
             marginBottom: 20,
           }}
         >
-          📅 Custom Date Range
+          📅 {t('date_range_title', language)}
         </div>
 
         {[
-          { label: "FROM", val: from, set: setFrom },
-          { label: "TO", val: to, set: setTo },
+          { label: t('from_label', language), val: from, set: setFrom },
+          { label: t('to_label', language), val: to, set: setTo },
         ].map(({ label, val, set }) => (
           <div key={label} style={{ marginBottom: 14 }}>
             <div
@@ -220,7 +221,7 @@ function DateRangeModal({ onApply, onClose }) {
               fontWeight: 500,
             }}
           >
-            Cancel
+            {t('cancel_btn', language)}
           </button>
           <button
             onClick={() => {
@@ -239,7 +240,7 @@ function DateRangeModal({ onApply, onClose }) {
               fontWeight: 700,
             }}
           >
-            Apply
+            {t('apply_btn', language)}
           </button>
         </div>
       </div>
@@ -398,7 +399,7 @@ export default function AnalyticsPage({
               {storeName || "Store"}
               <br />
               <span style={{ fontWeight: 400, fontSize: 12, opacity: 0.8 }}>
-                Business Insights
+                {t('business_insights', language)}
               </span>
             </span>
           </div>
@@ -418,7 +419,7 @@ export default function AnalyticsPage({
               marginBottom: 6,
             }}
           >
-            TOTAL EXPENSES
+            {t('total_expenses_label', language)}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div
@@ -436,7 +437,7 @@ export default function AnalyticsPage({
 
         {/* Period tabs + calendar */}
         <div style={{ display: "flex", alignItems: "flex-end" }}>
-          {PERIODS.map((p) => (
+          {PERIOD_KEYS.map((p) => (
             <button
               key={p.key}
               onClick={() => handlePeriodClick(p.key)}
@@ -455,7 +456,7 @@ export default function AnalyticsPage({
                     : "2.5px solid transparent",
               }}
             >
-              {p.label}
+              {t(p.tKey, language)}
             </button>
           ))}
 
@@ -519,7 +520,7 @@ export default function AnalyticsPage({
           <div
             style={{ textAlign: "center", padding: "40px 0", color: "#aaa" }}
           >
-            <div style={{ fontSize: 28, marginBottom: 8 }}>⏳</div>Loading...
+            <div style={{ fontSize: 28, marginBottom: 8 }}>⏳</div>{t('loading', language)}
           </div>
         )}
 
@@ -535,7 +536,7 @@ export default function AnalyticsPage({
               }}
             >
               <span style={{ fontSize: 15, fontWeight: 700, color: "#1a1a1a" }}>
-                Expense Categories
+                {t('expense_categories', language)}
               </span>
             </div>
             {expenseCats.length === 0 ? (
@@ -550,7 +551,7 @@ export default function AnalyticsPage({
                   boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
                 }}
               >
-                No expenses recorded this period
+                {t('no_expenses_period', language)}
               </div>
             ) : (
               expenseCats.map(({ tag, amt }) => {
@@ -613,7 +614,7 @@ export default function AnalyticsPage({
                       <div
                         style={{ fontSize: 10, color: "#bbb", marginTop: 2 }}
                       >
-                        {pct}% OF TOTAL
+                        {pct}% {t('of_total', language)}
                       </div>
                     </div>
                     <MiniBars pct={pct} color={color} />
@@ -636,10 +637,10 @@ export default function AnalyticsPage({
               }}
             >
               <span style={{ fontSize: 15, fontWeight: 700, color: "#1a1a1a" }}>
-                Revenue Channels
+                {t('revenue_channels', language)}
               </span>
               <span style={{ fontSize: 11, color: "#888" }}>
-                how money came in
+                {t('how_money_in', language)}
               </span>
             </div>
             {collectionCats.map(({ tag, amt }) => {
@@ -698,7 +699,7 @@ export default function AnalyticsPage({
                       {fmtRs(amt)}
                     </div>
                     <div style={{ fontSize: 10, color: "#bbb", marginTop: 2 }}>
-                      {pct}% OF COLLECTIONS
+                      {pct}% {t('of_collections', language)}
                     </div>
                   </div>
                   <MiniBars pct={pct} color={color} />
@@ -727,7 +728,7 @@ export default function AnalyticsPage({
                 marginBottom: 12,
               }}
             >
-              EXPENSE COMPOSITION
+              {t('expense_composition', language)}
             </div>
             <div
               style={{
@@ -791,6 +792,7 @@ export default function AnalyticsPage({
         <DateRangeModal
           onApply={handleCustomApply}
           onClose={() => setShowDatePick(false)}
+          language={language}
         />
       )}
     </div>

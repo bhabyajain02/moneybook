@@ -31,11 +31,11 @@ function getRange(period) {
   return { start: null, end: null } // 'all'
 }
 
-const PERIOD_LABELS = [
-  { key: 'month',   label: 'This Month' },
-  { key: 'quarter', label: 'Quarter' },
-  { key: 'year',    label: 'Year' },
-  { key: 'all',     label: 'All Time' },
+const PERIOD_KEYS = [
+  { key: 'month',   tKey: 'period_this_month' },
+  { key: 'quarter', tKey: 'period_quarter' },
+  { key: 'year',    tKey: 'period_year_label' },
+  { key: 'all',     tKey: 'period_all_time' },
 ]
 
 
@@ -114,7 +114,7 @@ function DuesCard({ due, phone, language, onContactSaved }) {
           <input type="tel" inputMode="numeric" maxLength={10} placeholder="10 digit number"
             value={contact} onChange={e => setContact(e.target.value.replace(/\D/g,'').slice(0,10))}
             className="contact-input" />
-          <button type="submit" className="contact-save-btn" disabled={saving}>{saving ? '...' : 'Save'}</button>
+          <button type="submit" className="contact-save-btn" disabled={saving}>{saving ? '...' : t('save_btn', language)}</button>
           <button type="button" className="contact-cancel-btn" onClick={() => setEditing(false)}>✕</button>
         </form>
       )}
@@ -130,9 +130,9 @@ function DuesCard({ due, phone, language, onContactSaved }) {
             <table className="dues-ledger-table">
               <thead>
                 <tr>
-                  <th>Date</th>
-                  <th>Description</th>
-                  <th className="dl-num">Amount</th>
+                  <th>{t('date_th', language)}</th>
+                  <th>{t('description_th', language)}</th>
+                  <th className="dl-num">{t('amount_th', language)}</th>
                   <th className="dl-num">{t('outstanding', language)}</th>
                 </tr>
               </thead>
@@ -197,7 +197,7 @@ function StaffCard({ member, language }) {
             {isNeg ? '+' : ''}{fmtRs(Math.abs(member.net_total))}
           </div>
           <div className="staff-sublabel" style={{ color: isNeg ? '#4CAF50' : '#999' }}>
-            {isNeg ? 'received more' : 'net paid'}
+            {isNeg ? t('received_more', language) : t('net_paid', language)}
           </div>
           <span className="expand-icon">{expanded ? '▲' : '▼'}</span>
         </div>
@@ -207,13 +207,13 @@ function StaffCard({ member, language }) {
         <div className="staff-expanded">
           {member.recent_payments && member.recent_payments.length > 0 ? (
             <div className="staff-section">
-              <div className="staff-section-title">Recent Transactions</div>
+              <div className="staff-section-title">{t('recent_transactions', language)}</div>
               {member.recent_payments.map((p, i) => {
                 const isReceipt = p.type === 'receipt'
                 return (
                   <div key={i} className="staff-payment-row">
                     <span className="staff-pay-date">{p.date}</span>
-                    <span className="staff-pay-desc">{p.description || (isReceipt ? 'Received' : 'Payment')}</span>
+                    <span className="staff-pay-desc">{p.description || (isReceipt ? t('received_badge', language) : t('payments_label', language))}</span>
                     <span className="staff-pay-amt" style={{ color: isReceipt ? '#2E7D32' : '#E65100' }}>
                       {isReceipt ? '+' : '−'}{fmtRs(p.amount)}
                     </span>
@@ -287,7 +287,7 @@ export default function DuesPage({ phone, storeName, language = 'hinglish' }) {
         display: 'flex', gap: 6, padding: '8px 12px', background: '#f5f5f5',
         borderBottom: '1px solid #e0e0e0', overflowX: 'auto', flexShrink: 0,
       }}>
-        {PERIOD_LABELS.map(p => (
+        {PERIOD_KEYS.map(p => (
           <button key={p.key} onClick={() => setPeriod(p.key)} style={{
             padding: '5px 12px', borderRadius: 16, border: 'none', fontSize: 12, fontWeight: 600,
             background: period === p.key ? '#00695C' : '#fff',
@@ -295,7 +295,7 @@ export default function DuesPage({ phone, storeName, language = 'hinglish' }) {
             boxShadow: period === p.key ? '0 2px 6px rgba(0,105,92,0.3)' : '0 1px 3px rgba(0,0,0,0.08)',
             cursor: 'pointer', whiteSpace: 'nowrap',
           }}>
-            {p.label}
+            {t(p.tKey, language)}
           </button>
         ))}
       </div>
@@ -343,15 +343,15 @@ export default function DuesPage({ phone, storeName, language = 'hinglish' }) {
                   background: '#FFF3E0', borderRadius: 10, margin: '8px 0 12px', fontSize: 13,
                 }}>
                   <div>
-                    <div style={{ color: '#999', fontSize: 10, fontWeight: 600 }}>PAID</div>
+                    <div style={{ color: '#999', fontSize: 10, fontWeight: 600 }}>{t('paid_label', language)}</div>
                     <div style={{ fontWeight: 700, color: '#E65100' }}>{fmtRs(totalStaffExpense)}</div>
                   </div>
                   <div style={{ textAlign: 'center' }}>
-                    <div style={{ color: '#999', fontSize: 10, fontWeight: 600 }}>RECEIVED</div>
+                    <div style={{ color: '#999', fontSize: 10, fontWeight: 600 }}>{t('received_label', language)}</div>
                     <div style={{ fontWeight: 700, color: '#2E7D32' }}>{fmtRs(totalStaffReceived)}</div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
-                    <div style={{ color: '#999', fontSize: 10, fontWeight: 600 }}>NET</div>
+                    <div style={{ color: '#999', fontSize: 10, fontWeight: 600 }}>{t('net_label', language)}</div>
                     <div style={{ fontWeight: 700, color: '#1a1a1a' }}>{fmtRs(totalStaffExpense - totalStaffReceived)}</div>
                   </div>
                 </div>
