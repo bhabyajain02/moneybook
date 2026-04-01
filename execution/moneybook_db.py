@@ -174,6 +174,179 @@ def _try_alter(conn, sql: str):
 
 
 # ─────────────────────────────────────────────
+# Data Migrations
+# ─────────────────────────────────────────────
+
+def migrate_fix_negative_udhaar():
+    """Fix udhaar records where balance is negative due to wrong column usage in ledger.
+
+    When users entered 'Sanjiv owes me ₹12000' in the left/Dues-Received column,
+    the system created dues_received (balance -12000). Since those users intended
+    'this person owes us', we flip the balance and transaction types so the record
+    shows correctly in the Dues & Staff tab.
+
+    Safe to run multiple times — only touches records where balance < 0.
+    """
+    import logging
+    log = logging.getLogger(__name__)
+    with get_db() as conn:
+        neg_rows = conn.execute(
+            "SELECT id, store_id, person_name, balance FROM udhaar WHERE balance < 0"
+        ).fetchall()
+
+        for u in neg_rows:
+            uid       = u['id']
+            abs_bal   = abs(u['balance'])
+            log.info(f"[migration] Fixing udhaar {uid} ({u['person_name']}): {u['balance']} → {abs_bal}")
+
+            # Flip udhaar balance to positive
+            conn.execute("UPDATE udhaar SET balance = ? WHERE id = ?", (abs_bal, uid))
+
+            # Flip udhaar_transactions: received↔given
+            conn.execute("""
+                UPDATE udhaar_transactions
+                SET type = CASE type
+                    WHEN 'received' THEN 'given'
+                    WHEN 'given'    THEN 'received'
+                    ELSE type END
+                WHERE udhaar_id = ?
+            """, (uid,))
+
+            # Flip the underlying transaction type in transactions table
+            txn_ids = conn.execute(
+                "SELECT transaction_id FROM udhaar_transactions WHERE udhaar_id = ? AND transaction_id IS NOT NULL",
+                (uid,)
+            ).fetchall()
+            for row in txn_ids:
+                tid = row['transaction_id']
+                conn.execute("""
+                    UPDATE transactions
+                    SET type = CASE type
+                        WHEN 'dues_received'   THEN 'dues_given'
+                        WHEN 'dues_given'      THEN 'dues_received'
+                        WHEN 'udhaar_received' THEN 'udhaar_given'
+                        WHEN 'udhaar_given'    THEN 'udhaar_received'
+                        ELSE type END
+                    WHERE id = ?
+                """, (tid,))
+
+
+def migrate_clean_dues_given_names():
+    """Fix dues_given rows where person_name/description were set to the full description text.
+
+    e.g. person_name = 'Dues received from Sanjiv Mishra' → 'Sanjiv Mishra'
+         description  = 'Dues received from Sanjiv Mishra' → 'Dues given to Sanjiv Mishra'
+
+    Safe to run multiple times.
+    """
+    import re, logging
+    log = logging.getLogger(__name__)
+    with get_db() as conn:
+        def _looks_like_sentence(val):
+            """Returns True if val is a full description rather than a clean person name."""
+            if not val: return False
+            words = val.strip().split()
+            if len(words) > 3: return True
+            if re.search(r'\b(dues|given|received|from|dated|amount|paisa|udhaar)\b', val, re.IGNORECASE): return True
+            return False
+
+        def _extract_person(raw):
+            # No IGNORECASE so [A-Z] only matches uppercase — stops at "dated" (lowercase d)
+            m = re.search(r'\b(?:from|to)\s+([A-Z][a-zA-Z]+(?: [A-Z][a-zA-Z]+)*)', raw)
+            if m: return m.group(1).strip()
+            # Fallback: strip leading keywords and take remaining capitalised words
+            stripped = re.sub(r'^(dues\s+)?(given|received)\s+(to|from)\s+', '', raw, flags=re.IGNORECASE).strip()
+            stripped = re.sub(r'\s+dated\s+.*$', '', stripped, flags=re.IGNORECASE).strip()
+            if stripped and len(stripped.split()) <= 4: return stripped
+            return None
+
+        # Fix transactions — any dues type where person_name looks like a sentence
+        rows = conn.execute("""
+            SELECT id, type, person_name, description FROM transactions
+            WHERE type IN ('dues_given', 'udhaar_given', 'dues_received', 'udhaar_received')
+        """).fetchall()
+
+        for row in rows:
+            pname = row['person_name'] or ''
+            desc  = row['description'] or ''
+            if not _looks_like_sentence(pname):
+                continue
+            clean_name = _extract_person(pname) or _extract_person(desc)
+            if not clean_name:
+                continue
+            # Also fix description if it's a sentence
+            clean_desc = desc
+            if _looks_like_sentence(desc):
+                if row['type'] in ('dues_given', 'udhaar_given'):
+                    clean_desc = re.sub(r'\breceived\b', 'given', desc, flags=re.IGNORECASE)
+                    clean_desc = re.sub(r'\bfrom\b', 'to', clean_desc, flags=re.IGNORECASE)
+                    clean_desc = re.sub(r'\s+dated\s+.*$', '', clean_desc, flags=re.IGNORECASE).strip()
+                else:
+                    clean_desc = re.sub(r'\bgiven\b', 'received', desc, flags=re.IGNORECASE)
+                    clean_desc = re.sub(r'\bto\b', 'from', clean_desc, flags=re.IGNORECASE)
+                    clean_desc = re.sub(r'\s+dated\s+.*$', '', clean_desc, flags=re.IGNORECASE).strip()
+            conn.execute(
+                "UPDATE transactions SET person_name = ?, description = ? WHERE id = ?",
+                (clean_name, clean_desc, row['id'])
+            )
+            log.info(f"[migration] Fixed txn {row['id']}: person_name='{clean_name}' desc='{clean_desc}'")
+
+        # Fix udhaar table where person_name is a full sentence
+        udhaar_rows = conn.execute("SELECT id, person_name FROM udhaar").fetchall()
+        for row in udhaar_rows:
+            if not _looks_like_sentence(row['person_name']):
+                continue
+            clean_name = _extract_person(row['person_name'])
+            if clean_name:
+                conn.execute("UPDATE udhaar SET person_name = ? WHERE id = ?", (clean_name, row['id']))
+                log.info(f"[migration] Fixed udhaar {row['id']}: '{row['person_name']}' → '{clean_name}'")
+
+
+def migrate_backfill_dues_person_name():
+    """Backfill person_name on dues_received/udhaar_received transactions where it is NULL.
+
+    When the ledger saved dues rows without person_name (old bug), the description
+    often contains the person's name (e.g. 'Amount received from Sanjiv Mishra dated 2-1-26').
+    This migration extracts the name from common description patterns and sets person_name.
+
+    Safe to run multiple times — only touches rows where person_name IS NULL.
+    """
+    import re, logging
+    log = logging.getLogger(__name__)
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT id, description FROM transactions
+            WHERE type IN ('dues_received','udhaar_received')
+              AND (person_name IS NULL OR person_name = '')
+              AND description IS NOT NULL AND description != ''
+        """).fetchall()
+
+        fixed = 0
+        for row in rows:
+            desc = row['description']
+            # Pattern 1: "... from <Name> dated ..."  or  "... from <Name>"
+            m = re.search(r'\bfrom\s+([A-Z][a-zA-Z]+(?: [A-Z][a-zA-Z]+)*)', desc)
+            if not m:
+                # Pattern 2: description IS just a person name (short, no keywords)
+                stripped = desc.strip()
+                if stripped and len(stripped.split()) <= 4 and not any(
+                    kw in stripped.lower() for kw in ['received','paid','dues','amount','rs','₹']
+                ):
+                    m = type('m', (), {'group': lambda self, n: stripped})()
+            if m:
+                person = m.group(1).strip()
+                conn.execute(
+                    "UPDATE transactions SET person_name = ? WHERE id = ?",
+                    (person, row['id'])
+                )
+                log.info(f"[migration] Backfilled person_name='{person}' on txn {row['id']}")
+                fixed += 1
+
+        if fixed:
+            log.info(f"[migration] backfill_dues_person_name: fixed {fixed} rows")
+
+
+# ─────────────────────────────────────────────
 # Store operations
 # ─────────────────────────────────────────────
 
@@ -869,6 +1042,14 @@ def get_dues_with_detail(store_id: int) -> list:
 
             recent_txns = [dict(r) for r in txn_rows]
 
+            # Total given and total received for this person (lifetime)
+            totals = conn.execute("""
+                SELECT
+                    COALESCE(SUM(CASE WHEN type = 'given'    THEN amount ELSE 0 END), 0) AS total_given,
+                    COALESCE(SUM(CASE WHEN type = 'received' THEN amount ELSE 0 END), 0) AS total_received
+                FROM udhaar_transactions WHERE udhaar_id = ?
+            """, (uid,)).fetchone()
+
             result.append({
                 'person_name':          u['person_name'],
                 'phone':                u['phone'],
@@ -876,7 +1057,125 @@ def get_dues_with_detail(store_id: int) -> list:
                 'last_transaction_date': last_date,
                 'days_overdue':         days_overdue,
                 'recent_transactions':  recent_txns,
+                'total_given':          totals['total_given'],
+                'total_received':       totals['total_received'],
             })
+        return result
+
+
+def _extract_name_from_desc(desc: str) -> str | None:
+    """Extract a person name from a transaction description.
+
+    Handles patterns like:
+      'Amount received from Sanjiv Mishra dated 2-1-26' → 'Sanjiv Mishra'
+      'Paisa mila Ramesh Kumar'                         → 'Ramesh Kumar'
+    """
+    import re
+    if not desc:
+        return None
+    # Pattern: "from <Name>" where Name starts with capital
+    m = re.search(r'\b(?:from|to)\s+([A-Z][a-zA-Z]+(?: [A-Z][a-zA-Z]+)*)', desc)
+    if m:
+        return m.group(1).strip()
+    # Short description with no finance keywords = likely just a name
+    stripped = desc.strip()
+    if stripped and len(stripped.split()) <= 4 and not re.search(
+        r'received|paid|dues|amount|paisa|mila|rs\.?|₹', stripped, re.IGNORECASE
+    ):
+        return stripped
+    return None
+
+
+def get_dues_received(store_id: int, start: str = None, end: str = None) -> list:
+    """Returns payments received against dues, grouped by resolved person name.
+
+    Includes transactions where person_name IS NULL by extracting the name
+    from the description field. Groups all rows by the resolved name.
+    Each row: person_name, total_received, last_date, txn_count, recent (last 5), net_pending.
+    """
+    with get_db() as conn:
+        params = [store_id]
+        date_filter = ""
+        if start and end:
+            date_filter = " AND date BETWEEN ? AND ?"
+            params += [start, end]
+        elif start:
+            date_filter = " AND date >= ?"
+            params.append(start)
+        elif end:
+            date_filter = " AND date <= ?"
+            params.append(end)
+
+        # Fetch ALL dues_received rows (including person_name IS NULL)
+        all_rows = conn.execute(f"""
+            SELECT id, person_name, amount, date, description
+            FROM transactions
+            WHERE store_id = ?
+              AND type IN ('dues_received', 'udhaar_received')
+              {date_filter}
+            ORDER BY date DESC, id DESC
+        """, params).fetchall()
+
+        # Resolve name for each row, skip rows where name can't be determined
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for row in all_rows:
+            name = row['person_name'] or _extract_name_from_desc(row['description'])
+            if not name:
+                continue
+            groups[name].append(dict(row))
+
+        result = []
+        for name, txns in groups.items():
+            total    = sum(t['amount'] for t in txns)
+            last_d   = max(t['date'] for t in txns)
+            recent   = txns[:5]  # already sorted DESC from query
+
+            # Net pending from udhaar table
+            udhaar_row = conn.execute(
+                "SELECT balance FROM udhaar WHERE store_id = ? AND person_name = ? COLLATE NOCASE",
+                (store_id, name)
+            ).fetchone()
+            net_pending = udhaar_row['balance'] if udhaar_row else 0
+
+            # Date and total amount when dues were originally given to this person
+            given_row = conn.execute("""
+                SELECT MIN(date) AS first_given, SUM(amount) AS total_given
+                FROM transactions
+                WHERE store_id = ? AND type IN ('dues_given', 'udhaar_given')
+                  AND person_name = ? COLLATE NOCASE
+            """, (store_id, name)).fetchone()
+            dues_given_date   = given_row['first_given']   if given_row else None
+            dues_given_amount = given_row['total_given']   if given_row else None
+
+            # Clean description for each recent txn (strip "dated X" suffix, extract plain text)
+            clean_recent = []
+            for txn in recent:
+                d = dict(txn)
+                desc = d.get('description') or ''
+                # Remove "dated DD-MM-YY" or "dated DD/MM/YY" trailing text
+                import re as _re
+                desc = _re.sub(r'\s+dated\s+[\d\-\/]+$', '', desc, flags=_re.IGNORECASE).strip()
+                # Remove person name from description to avoid repetition
+                if name and name.lower() in desc.lower():
+                    desc = _re.sub(_re.escape(name), '', desc, flags=_re.IGNORECASE).strip()
+                    desc = _re.sub(r'\s+(to|from)\s*$', '', desc, flags=_re.IGNORECASE).strip()
+                d['description'] = desc or 'Payment received'
+                clean_recent.append(d)
+
+            result.append({
+                'person_name':     name,
+                'total_received':  total,
+                'last_date':       last_d,
+                'txn_count':       len(txns),
+                'recent':          clean_recent,
+                'net_pending':     net_pending,
+                'dues_given_date':   dues_given_date,
+                'dues_given_amount': dues_given_amount,
+            })
+
+        # Sort by last_date DESC
+        result.sort(key=lambda x: x['last_date'], reverse=True)
         return result
 
 
@@ -1073,5 +1372,8 @@ def clear_store_data(store_id: int) -> None:
     """Delete all web chat messages AND transactions for a store, and reset bot state."""
     with get_db() as conn:
         conn.execute("DELETE FROM web_messages WHERE store_id = ?", (store_id,))
+        # Must delete child tables before parent to satisfy FK constraints
+        conn.execute("DELETE FROM udhaar_transactions WHERE udhaar_id IN (SELECT id FROM udhaar WHERE store_id = ?)", (store_id,))
+        conn.execute("DELETE FROM udhaar WHERE store_id = ?", (store_id,))
         conn.execute("DELETE FROM transactions WHERE store_id = ?", (store_id,))
         conn.execute("UPDATE stores SET bot_state = '{}' WHERE id = ?", (store_id,))

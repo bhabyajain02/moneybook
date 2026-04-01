@@ -2,25 +2,34 @@ import { useState } from 'react'
 import { quickParse } from '../api.js'
 import { t } from '../translations.js'
 
-const TYPE_OPTION_KEYS = [
-  { value: 'sale',             key: 'type_sale' },
-  { value: 'expense',          key: 'type_expense' },
-  { value: 'dues_given',        key: 'type_dues_given' },
-  { value: 'dues_received',     key: 'type_dues_received' },
-  { value: 'bank_deposit',     key: 'type_bank_deposit' },
-  { value: 'receipt',          key: 'type_receipt' },
-  { value: 'opening_balance',  key: 'type_opening_bal' },
-  { value: 'closing_balance',  key: 'type_closing_bal' },
-  { value: 'cash_in_hand',     key: 'type_cash_in_hand' },
-  { value: 'upi_in_hand',      key: 'type_upi_in_hand' },
-  { value: 'other',             key: 'type_other' },
+// Extract clean person name from a value that might be a full sentence
+// e.g. "Dues received from Sanjiv Mishra" → "Sanjiv Mishra"
+function extractDisplayName(name) {
+  if (!name) return ''
+  const m = name.match(/\b(?:from|to)\s+([A-Z][a-zA-Z]+(?: [A-Z][a-zA-Z]+)*)/i)
+  if (m) return m[1].trim()
+  return name
+}
+
+export const TYPE_OPTIONS = [
+  { value: 'sale',             label: '💰 Sale' },
+  { value: 'expense',          label: '💸 Expense' },
+  { value: 'dues_given',        label: '📤 Dues Given' },
+  { value: 'dues_received',     label: '📥 Dues Received' },
+  { value: 'bank_deposit',     label: '🏦 Bank Deposit' },
+  { value: 'receipt',          label: '📨 Receipt' },
+  { value: 'opening_balance',  label: '🔓 Opening Bal' },
+  { value: 'closing_balance',  label: '🔒 Closing Bal' },
+  { value: 'cash_in_hand',     label: '💵 Cash in Hand' },
+  { value: 'upi_in_hand',      label: '📱 UPI in Hand' },
+  { value: 'other',             label: '📋 Other' },
 ]
 
 export function getTypeOptions(language) {
-  return TYPE_OPTION_KEYS.map(o => ({ value: o.value, label: t(o.key, language) }))
+  return TYPE_OPTIONS.map(o => ({ value: o.value, label: t(o.key, language) }))
 }
 
-export const TYPE_OPTIONS = TYPE_OPTION_KEYS.map(o => ({ value: o.value, label: t(o.key) }))
+export const TYPE_OPTIONS = TYPE_OPTIONS.map(o => ({ value: o.value, label: t(o.key) }))
 
 export const TYPE_COLORS = {
   sale:'#25D366', receipt:'#25D366', dues_given:'#E53935',
@@ -195,7 +204,7 @@ function TxnCard({ txn, index, onChange, onDelete, language }) {
         </div>
         <div className="txn-desc">{txn.description || '—'}</div>
         <div className="txn-footer-row">
-          {txn.person_name && <span className="txn-person">👤 {txn.person_name}</span>}
+          {txn.person_name && <span className="txn-person">👤 {extractDisplayName(txn.person_name)}</span>}
           {txn.tag && txn.type === 'expense' && (
             <span className="txn-tag">🏷️ {txn.tag.replace(/_/g, ' ')}</span>
           )}

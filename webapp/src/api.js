@@ -63,8 +63,11 @@ export async function fetchAnalytics(phone, period = 'day', start = null, end = 
   return r.json()
 }
 
-export async function fetchDues(phone) {
-  const r = await fetch(`${BASE}/dues?phone=${encodeURIComponent(phone)}`)
+export async function fetchDues(phone, start = null, end = null) {
+  let url = `${BASE}/dues?phone=${encodeURIComponent(phone)}`
+  if (start) url += `&start=${start}`
+  if (end)   url += `&end=${end}`
+  const r = await fetch(url)
   if (!r.ok) throw new Error('Dues fetch failed')
   return r.json()
 }
