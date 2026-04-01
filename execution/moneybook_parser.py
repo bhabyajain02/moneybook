@@ -44,6 +44,22 @@ if not _api_key:
 
 _client = anthropic.Anthropic(api_key=_api_key)
 
+# ── Gemini fallback setup ────────────────────────────────────────
+_gemini_key = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')
+_gemini_available = False
+_gemini_model = None
+try:
+    import google.generativeai as genai
+    if _gemini_key:
+        genai.configure(api_key=_gemini_key)
+        _gemini_model = genai.GenerativeModel('gemini-2.5-pro')
+        _gemini_available = True
+        print("✅ Gemini fallback ready (gemini-2.5-pro)")
+    else:
+        print("⚠️ No GEMINI_API_KEY — Gemini fallback disabled")
+except ImportError:
+    print("⚠️ google-generativeai not installed — Gemini fallback disabled")
+
 # Models
 _TEXT_MODEL      = 'claude-haiku-4-5'    # fast + cheap for simple text messages
 _VISION_MODEL    = 'claude-opus-4-6'     # best available — most accurate for handwritten images
@@ -153,12 +169,14 @@ Maximum 15 distinct tags per store — prefer reusing existing tags over creatin
 Be as specific as the context allows. Never write "other" — always describe what you see.
 Non-expense types (sale, receipt, opening_balance, etc.) → tag: null
 
-━━ DESCRIPTION — BE SPECIFIC ━━
-Write a clear, specific English description that explains WHAT was transacted.
-Include: what was sold/bought/paid, who was involved, context if mentioned.
-BAD: "Sale transaction", "Expense payment", "Salary paid"
-GOOD: "Rice and dal sold to Raju", "Electricity bill for March", "Monthly salary to Ramesh"
-Keep under 60 characters. Use natural phrasing, not jargon.
+━━ DESCRIPTION — KEEP ORIGINAL FORM ━━
+Use the original text as the description. Keep abbreviations as-is (e.g. "CD" stays "CD", not "Cash Discount").
+Do NOT expand, rephrase, or interpret the original wording. Just clean it up minimally.
+Include the person name if mentioned. Keep under 60 characters.
+BAD: "Credit given to Vivek Singh" (when original said "CD Vivek Singh")
+GOOD: "CD Vivek Singh" (keeps original abbreviation)
+BAD: "Sale transaction" (too vague)
+GOOD: "Rice and dal sold to Raju" (when original text had this detail)
 
 ━━ PERSON_NAME RULES ━━
 person_name must be a real human's name (e.g. "Ramesh", "Vivek Singh", "A. Tiwari").
@@ -283,12 +301,12 @@ Maximum 15 distinct tags per store — prefer reusing existing tags over creatin
 Good examples: petrol, staff_salary, tailoring, freight, refreshment, electricity, rent, repair
 Non-expense types → tag: null
 
-━━ DESCRIPTION — BE SPECIFIC ━━
-Write a clear, specific English description that explains WHAT was transacted.
-Include: what was sold/bought/paid, who was involved, context if mentioned.
-BAD: "Sale transaction", "Expense payment", "Salary paid"
-GOOD: "Rice and dal sold to Raju", "Electricity bill for March", "Monthly salary to Ramesh", "Auto parts purchased for repair"
-Keep under 60 characters. Use natural phrasing, not jargon.
+━━ DESCRIPTION — KEEP ORIGINAL FORM ━━
+Use the original text as the description. Keep abbreviations as-is (e.g. "CD" stays "CD", not "Cash Discount").
+Do NOT expand, rephrase, or interpret the original wording. Just clean it up minimally.
+Include the person name if mentioned. Keep under 60 characters.
+BAD: "Credit given to Vivek Singh" (when original said "CD Vivek Singh")
+GOOD: "CD Vivek Singh" (keeps original abbreviation)
 
 ━━ PERSON_NAME RULES ━━
 person_name must be a real human's name (e.g. "Ramesh", "Vivek Singh", "A. Tiwari").
@@ -472,6 +490,81 @@ def _call_claude(model: str, prompt: str,
             raise
 
 
+def _call_gemini(prompt: str,
+                 image_bytes: bytes = None, image_mime: str = None,
+                 retries: int = 2) -> str:
+    """
+    Fallback: call Google Gemini when Claude API is unavailable.
+    Uses gemini-2.5-pro with the same prompt format.
+    """
+    if not _gemini_available:
+        raise RuntimeError("Gemini fallback not available — no API key or SDK")
+
+    import google.generativeai as genai
+    from PIL import Image
+    import io
+
+    parts = []
+    if image_bytes:
+        # Gemini expects PIL Image or inline_data
+        img = Image.open(io.BytesIO(image_bytes))
+        parts.append(img)
+    parts.append(prompt)
+
+    for attempt in range(retries):
+        try:
+            resp = _gemini_model.generate_content(
+                parts,
+                generation_config=genai.types.GenerationConfig(
+                    max_output_tokens=8192,
+                    temperature=0.1,
+                ),
+            )
+            return resp.text
+        except Exception as e:
+            err = str(e)
+            if attempt < retries - 1:
+                wait = 10 * (2 ** attempt)
+                print(f'Gemini error ({err[:80]}) — retrying in {wait}s (attempt {attempt+1}/{retries})')
+                time.sleep(wait)
+            else:
+                raise
+
+
+def _call_llm(model: str, prompt: str,
+              image_bytes: bytes = None, image_mime: str = None,
+              use_thinking: bool = False, retries: int = 3) -> str:
+    """
+    Unified LLM caller: tries Claude first, falls back to Gemini if Claude is down.
+    This is the function all parsers should call instead of _call_claude directly.
+    """
+    has_image = bool(image_bytes)
+    task = 'vision' if has_image else 'text'
+    try:
+        result = _call_claude(model, prompt, image_bytes, image_mime,
+                            use_thinking=use_thinking, retries=retries)
+        print(f'🤖 LLM call [{task}] → Claude ({model}) ✅')
+        return result
+    except Exception as claude_err:
+        print(f'🤖 LLM call [{task}] → Claude ({model}) ❌ {str(claude_err)[:80]}')
+        if not _gemini_available:
+            raise  # No fallback, re-raise Claude error
+
+        print(f'🤖 LLM call [{task}] → Gemini fallback (gemini-2.5-pro) ...')
+        try:
+            result = _call_gemini(prompt, image_bytes, image_mime, retries=2)
+            print(f'🤖 LLM call [{task}] → Gemini fallback ✅')
+            return result
+        except Exception as gemini_err:
+            print(f'🤖 LLM call [{task}] → Gemini fallback ❌ {str(gemini_err)[:80]}')
+            # Both failed — raise the original Claude error with Gemini context
+            raise RuntimeError(
+                f"Both Claude and Gemini failed.\n"
+                f"Claude: {str(claude_err)[:200]}\n"
+                f"Gemini: {str(gemini_err)[:200]}"
+            ) from claude_err
+
+
 # ─────────────────────────────────────────────────────────────
 # Core parsers
 # ─────────────────────────────────────────────────────────────
@@ -526,7 +619,7 @@ def parse_text_message(message: str, store_context: str = '', language: str = 'h
         existing_tags_hint=tags_hint,
     )
     try:
-        text = _call_claude(_TEXT_MODEL, prompt)
+        text = _call_llm(_TEXT_MODEL, prompt)
         return _safe_parse(text,
             "Samajh nahi aaya 🙏\nExample: 'Sale 5000 cash' ya 'Raju ne 500 udhaar liya'")
     except anthropic.RateLimitError:
@@ -558,7 +651,7 @@ Return ONLY a JSON array of tags in the same order, e.g. ["rent", "transport", "
 No explanation, no markdown — just the JSON array."""
 
     try:
-        text = _call_claude(_TEXT_MODEL, prompt)
+        text = _call_llm(_TEXT_MODEL, prompt)
         cleaned = _clean_json(text)
         tags = json.loads(cleaned)
         if isinstance(tags, list) and len(tags) == len(descriptions):
@@ -616,7 +709,7 @@ def parse_image_message(image_url: str = None,
                          '(No prior corrections for this store yet)',
             existing_tags_hint=tags_hint,
         )
-        result_text = _call_claude(
+        result_text = _call_llm(
             _VISION_MODEL, prompt,
             image_bytes=image_bytes, image_mime=image_mime,
             use_thinking=False,
@@ -641,7 +734,7 @@ def parse_correction(original_txn: dict, correction_text: str) -> dict:
         correction=correction_text,
     )
     try:
-        text = _call_claude(_TEXT_MODEL, prompt)
+        text = _call_llm(_TEXT_MODEL, prompt)
         corrected = json.loads(_clean_json(text))
         return {**original_txn, **corrected}   # merge: only override changed fields
     except Exception:
@@ -723,7 +816,7 @@ def is_trackable_person(name: str, description: str, txn_type: str, amount: floa
         amount=amount or 0,
     )
     try:
-        text = _call_claude(_TEXT_MODEL, prompt)
+        text = _call_llm(_TEXT_MODEL, prompt)
         result = json.loads(_clean_json(text))
         verdict = result.get('is_person', False)
         return bool(verdict)
@@ -749,7 +842,7 @@ def classify_correction_scope(original_txn: dict, corrected_txn: dict,
         corrected=json.dumps(corrected_txn, ensure_ascii=False),
     )
     try:
-        text = _call_claude(_TEXT_MODEL, prompt)
+        text = _call_llm(_TEXT_MODEL, prompt)
         result = json.loads(_clean_json(text))
         scope = result.get('scope', 'store')
         return scope if scope in ('global', 'segment', 'store') else 'store'

@@ -658,6 +658,7 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
                 onCancel={isLastConfirm ? () => handleCancelConfirm(msg.id) : null}
                 onPendingEdit={isLastConfirm ? (txns) => handlePendingEdit(msg.id, txns) : null}
                 onOpenLedger={() => setShowLedger(true)}
+                language={language}
               />
             )
           })
@@ -676,6 +677,7 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
         onImage={handleImage}
         onLedger={() => setShowLedger(true)}
         disabled={sending}
+        language={language}
       />
 
       {/* ── Ledger entry modal (manual) ───────────────────────── */}
@@ -695,6 +697,7 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
           staffOptions={staffOptions}
           onComplete={handleClassifyComplete}
           onCancel={handleClassifyCancel}
+          language={language}
         />
       )}
 

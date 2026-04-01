@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
+import { t } from '../translations.js'
 
-export default function InputBar({ onSend, onImage, onLedger, disabled }) {
+export default function InputBar({ onSend, onImage, onLedger, disabled, language }) {
   const [text, setText] = useState('')
   const fileRef = useRef()
   const textRef = useRef()
@@ -51,7 +52,7 @@ export default function InputBar({ onSend, onImage, onLedger, disabled }) {
           className="icon-btn"
           onClick={onLedger}
           disabled={disabled}
-          title="Manual entry (Khata Bahi)"
+          title={t('manual_entry_title', language)}
           aria-label="Open ledger entry"
         >
           <svg viewBox="0 0 24 24" fill="none" stroke="#667781" strokeWidth="2"
@@ -84,7 +85,7 @@ export default function InputBar({ onSend, onImage, onLedger, disabled }) {
         <textarea
           ref={textRef}
           className="msg-textarea"
-          placeholder="Message"
+          placeholder={t('placeholder_msg', language)}
           rows={1}
           value={text}
           onInput={handleInput}

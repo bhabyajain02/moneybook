@@ -62,6 +62,7 @@ from moneybook_parser import (
     format_daily_summary, format_period_summary, format_udhaar_list,
     TAG_META,
 )
+from execution.translations import t as bt
 
 TWILIO_ACCOUNT_SID     = os.getenv('TWILIO_ACCOUNT_SID')
 TWILIO_AUTH_TOKEN      = os.getenv('TWILIO_AUTH_TOKEN')
@@ -102,17 +103,8 @@ SEGMENT_LABELS = {
     'general':     '🏪 Aur kuch / Other',
 }
 
-SEGMENT_MSG = (
-    "Aapka business kya hai?\n\n"
-    "1️⃣ Kapda / Textile\n"
-    "2️⃣ Grocery / Kiryana\n"
-    "3️⃣ Dawai / Pharmacy\n"
-    "4️⃣ Hardware / Tools\n"
-    "5️⃣ Khana / Food\n"
-    "6️⃣ Electronics\n"
-    "7️⃣ Kuch aur / Other\n\n"
-    "_(Number bhejein — 1 se 7)_"
-)
+def get_segment_msg(lang='hinglish'):
+    return bt('segment_ask', lang)
 
 PERSON_LABELS = {
     'staff':    '👷 Staff/Employee',
@@ -122,24 +114,8 @@ PERSON_LABELS = {
 }
 
 
-HELP_MSG = """\
-🏪 *MoneyBook — Aapka Digital Khata*
-
-*Transaction log karo (naturally likhein):*
-• Sale 5000 cash
-• Raju ne 500 udhaar liya
-• CD A. Tiwari 695  _(Cash Discount)_
-• Bijli bill 800 diya
-• Bank mein 20000 jama kiya
-• 📷 Notebook page ki photo bhejein
-
-*Commands:*
-• /summary  → Aaj ka hisaab (expense by category + cash check)
-• /month    → Is mahine ka summary
-• /quarter  → Is quarter ka summary
-• /year     → Is saal ka summary
-• /udhaar   → Outstanding udhaar list
-• /help     → Yeh message"""
+def get_help_msg(lang='hinglish'):
+    return bt('help_msg', lang)
 
 COMMANDS = {
     '/summary': 'summary', 'summary': 'summary',
@@ -248,7 +224,7 @@ def run_command(action: str, store: dict) -> str:
         data  = get_period_summary(sid, start, end, label=f'Year {today.year}')
         return format_period_summary(data, name)
 
-    return HELP_MSG
+    return get_help_msg(store.get('language', 'hinglish'))
 
 
 def save_confirmed_batch(store_id: int, transactions: list,
@@ -276,8 +252,9 @@ def next_person_to_classify(store_id: int, persons_found: list) -> Optional[str]
 
 def handle_confirming(body: str, store: dict, state: dict) -> str:
     """Handle response when bot is in 'confirming' state."""
-    sid  = store['id']
-    t    = body.strip().lower()
+    sid      = store['id']
+    language = store.get('language', 'hinglish')
+    t        = body.strip().lower()
 
     pending      = state.get('pending', [])
     raw_message  = state.get('raw_message', '')
@@ -289,7 +266,7 @@ def handle_confirming(body: str, store: dict, state: dict) -> str:
     # ── Cancel ──────────────────────────────────────
     if t == 'cancel':
         clear_bot_state(sid)
-        return "❌ Cancel ho gaya. Naya entry bhejein."
+        return bt('confirm_cancel', language)
 
     # ── Haan = save all ─────────────────────────────
     if t in ('haan', 'han', 'yes', 'ok', 'okay', 'sahi', '✅', 'haan sahi'):
@@ -329,12 +306,12 @@ def handle_confirming(body: str, store: dict, state: dict) -> str:
             amt  = txn_for_person.get('amount', 0)
             desc = txn_for_person.get('description', '')
             return (
-                f"✅ *{len(pending)} entries save ho gayi!*\n\n"
-                + format_person_question(next_person, float(amt), desc)
+                bt('confirm_saved', language, count=len(pending))
+                + "\n\n" + format_person_question(next_person, float(amt), desc)
             )
         else:
             clear_bot_state(sid)
-            return f"✅ *{len(pending)} entries save ho gayi!*\n\nAgle entry ke liye ready hoon 📒"
+            return bt('confirm_saved', language, count=len(pending))
 
     # ── Galat N = fix entry N ────────────────────────
     import re
@@ -352,15 +329,13 @@ def handle_confirming(body: str, store: dict, state: dict) -> str:
             })
             tag   = entry.get('tag', 'other')
             emoji = TAG_META.get(tag, ('', '📝'))[1]
-            return (
-                f"✏️ *Entry {idx+1} theek karo:*\n"
-                f"_{entry.get('description','')} — ₹{float(entry['amount']):,.0f} "
-                f"{emoji}_\n\n"
-                "Sahi info bhejein\n"
-                "_(e.g. 'amount 750 tha' ya 'yeh Raju ka udhaar tha')_"
-            )
+            return bt('correction_prompt', language,
+                       idx=idx+1,
+                       desc=entry.get('description', ''),
+                       amount=f"{float(entry['amount']):,.0f}",
+                       emoji=emoji)
         else:
-            return f"Entry {idx+1} nahi mili. 1 se {len(pending)} ke beech number bhejein."
+            return bt('entry_not_found', language, idx=idx+1, total=len(pending))
 
     # ── Tag change: "3 tag electricity" ────────────
     m_tag = re.match(r'^(\d+)\s+tag\s+(\w+)$', t)
@@ -382,11 +357,7 @@ def handle_confirming(body: str, store: dict, state: dict) -> str:
 
     # ── Unrecognized ────────────────────────────────
     return (
-        "Samajh nahi aaya 🤔\n\n"
-        "• *haan* → Sab save karo\n"
-        "• *galat 3* → Entry 3 theek karo\n"
-        "• *3 tag electricity* → Entry 3 ka tag badlo\n"
-        "• *cancel* → Cancel\n\n"
+        bt('confirm_help', language)
         + format_pending_confirmation(pending, page_date)
     )
 
@@ -462,9 +433,10 @@ def handle_correcting(body: str, store: dict, state: dict) -> str:
 
 def handle_classifying(body: str, store: dict, state: dict) -> str:
     """Process person category choice and advance to next person or finish."""
-    sid   = store['id']
-    queue = state.get('persons_queue', [])
-    idx   = state.get('person_index', 0)
+    sid      = store['id']
+    language = store.get('language', 'hinglish')
+    queue    = state.get('persons_queue', [])
+    idx      = state.get('person_index', 0)
 
     choice = body.strip()
     if choice not in PERSON_CATEGORIES:
@@ -489,7 +461,7 @@ def handle_classifying(body: str, store: dict, state: dict) -> str:
         return response + format_person_question(next_name, 0, '')
     else:
         clear_bot_state(sid)
-        return response + "Sab log register ho gaye! 🎉\nAgle entry ke liye ready hoon 📒"
+        return response + bt('person_classify_done', language)
 
 
 # ─────────────────────────────────────────────
@@ -503,8 +475,9 @@ def process_image_and_reply(from_number: str, media_url: str, body: str):
     so we are not constrained by the 15-second webhook timeout.
     """
     try:
-        store = get_or_create_store(from_number)
-        sid   = store['id']
+        store    = get_or_create_store(from_number)
+        sid      = store['id']
+        language = store.get('language', 'hinglish')
 
         ctx           = build_store_context(sid)   # per-store learning context
         etags         = [t['tag'] for t in get_store_expense_tags(sid, limit=15)]
@@ -519,12 +492,10 @@ def process_image_and_reply(from_number: str, media_url: str, body: str):
             # If low confidence, show raw OCR so owner can verify what was read
             ocr_conf = parsed.get('ocr_confidence', 'high')
             if raw_ocr and ocr_conf in ('low', 'medium'):
-                reply = (f"Kuch nahi mila 🤔\n\n"
-                         f"*Maine yeh text padha:*\n_{raw_ocr[:400]}_\n\n"
-                         f"Sahi hai? Ya clearer photo bhejiye.")
+                reply = bt('photo_ocr_fail', language, ocr=raw_ocr[:400])
             else:
                 reply = (parsed.get('response_message') or
-                         "Photo se kuch nahi mila 🤔\nClear photo bhejiye ya manually type karein.")
+                         bt('photo_empty', language))
         else:
             set_bot_state(sid, {
                 'state':         'confirming',
@@ -560,22 +531,19 @@ async def whatsapp_webhook(
 
     log.info(f"▶ {from_number} | media={has_media} | '{body[:60]}'")
 
-    store = get_or_create_store(from_number)
-    sid   = store['id']
+    store    = get_or_create_store(from_number)
+    sid      = store['id']
+    language = store.get('language', 'hinglish')
 
     # ── Onboarding ───────────────────────────────────────
     if store['onboarding_state'] == 'new':
         update_store(sid, onboarding_state='awaiting_name')
-        return twiml_reply(
-            "🏪 *MoneyBook mein aapka swagat hai!*\n\n"
-            "Aapka digital khata tayar ho raha hai.\n\n"
-            "Apne store ka naam kya hai?"
-        )
+        return twiml_reply(bt('welcome', language))
 
     if store['onboarding_state'] == 'awaiting_name':
         name = body or 'My Store'
         update_store(sid, name=name, onboarding_state='awaiting_segment')
-        return twiml_reply(f"✅ *{name}* — sundar naam!\n\n" + SEGMENT_MSG)
+        return twiml_reply(bt('store_name_set', language, name=name) + get_segment_msg(language))
 
     if store['onboarding_state'] == 'awaiting_segment':
         choice  = body.strip()
@@ -583,9 +551,8 @@ async def whatsapp_webhook(
         label   = SEGMENT_LABELS[segment]
         update_store(sid, segment=segment, onboarding_state='active')
         return twiml_reply(
-            f"✅ Segment set: *{label}*\n\n"
-            "Ab se main aapke business ke hisaab se entries samjhunga.\n\n"
-            + HELP_MSG
+            bt('segment_set', language, label=label)
+            + get_help_msg(language)
         )
 
     # ── Image: respond instantly, process in background ──
@@ -593,7 +560,7 @@ async def whatsapp_webhook(
     # takes 20-30s, so we must return immediately and push the reply later.
     if has_media:
         background_tasks.add_task(process_image_and_reply, from_number, MediaUrl0, body)
-        return twiml_reply("📷 Photo mil gayi! Padh raha hoon... thoda wait karein ⏳")
+        return twiml_reply(bt('photo_processing', language))
 
     # ── Conversation state machine (text only below) ─────
     bot_state = get_bot_state(sid)
@@ -628,9 +595,7 @@ async def whatsapp_webhook(
     if not txns:
         return twiml_reply(
             parsed.get('response_message') or
-            "Koi amount nahi mila 🤔\n\n"
-            "Try: 'Sale 5000' ya notebook photo bhejiye.\n"
-            "/help ke liye type karein."
+            bt('parse_fail', language)
         )
 
     # Single transaction → auto-save immediately
@@ -781,17 +746,19 @@ def _process_web_message(phone: str, body: str, language: str = 'hinglish') -> d
     """
     store = get_or_create_store(phone)
     sid   = store['id']
+    # Use store language if available, fall back to passed-in language
+    lang  = store.get('language') or language
 
     # ── Onboarding ────────────────────────────────────────
     if store['onboarding_state'] == 'new':
         update_store(sid, onboarding_state='awaiting_name')
-        reply = "🏪 *MoneyBook mein aapka swagat hai!*\n\nApne store ka naam kya hai?"
+        reply = bt('welcome', lang)
         return {'reply': reply, 'quick_replies': [], 'processing': False}
 
     if store['onboarding_state'] == 'awaiting_name':
         name = body.strip() or 'My Store'
         update_store(sid, name=name, onboarding_state='awaiting_segment')
-        reply = f"✅ *{name}* — sundar naam!\n\n" + SEGMENT_MSG
+        reply = bt('store_name_set', lang, name=name) + get_segment_msg(lang)
         return {'reply': reply, 'quick_replies': [], 'processing': False}
 
     if store['onboarding_state'] == 'awaiting_segment':
@@ -799,7 +766,7 @@ def _process_web_message(phone: str, body: str, language: str = 'hinglish') -> d
         segment = SEGMENT_CHOICES.get(choice, 'general')
         label   = SEGMENT_LABELS[segment]
         update_store(sid, segment=segment, onboarding_state='active')
-        reply = f"✅ Segment set: *{label}*\n\nAb se main aapke business ke hisaab se entries samjhunga.\n\n" + HELP_MSG
+        reply = bt('segment_set', lang, label=label) + get_help_msg(lang)
         return {'reply': reply, 'quick_replies': [], 'processing': False}
 
     # ── Commands always interrupt state ──────────────────
@@ -834,7 +801,7 @@ def _process_web_message(phone: str, body: str, language: str = 'hinglish') -> d
         # Allow cancel to escape classifying state
         if body.strip().lower() == 'cancel':
             clear_bot_state(sid)
-            return {'reply': '❌ Classification cancelled. Koi nayi entry bhejein.', 'quick_replies': [], 'processing': False}
+            return {'reply': bt('classify_cancel', lang), 'quick_replies': [], 'processing': False}
         reply = handle_classifying(body, store, bot_state)
         new_state = get_bot_state(sid)
         qr = _quick_replies_for_state(new_state, new_state.get('pending', []))
@@ -850,7 +817,7 @@ def _process_web_message(phone: str, body: str, language: str = 'hinglish') -> d
 
     if not txns:
         reply = (parsed.get('response_message') or
-                 "Koi amount nahi mila 🤔\nTry: 'Sale 5000' ya notebook photo bhejiye.")
+                 bt('parse_fail', lang))
         return {'reply': reply, 'quick_replies': [], 'processing': False}
 
     if len(txns) == 1:
@@ -978,7 +945,8 @@ async def api_send_image(
     user_msg_id = save_web_message(sid, 'user', body=None, media_url=media_url)
 
     # Ack message while processing
-    ack_id = save_web_message(sid, 'bot', '📷 Photo mil gayi! Padh raha hoon... thoda wait karein ⏳')
+    img_lang = store.get('language') or language
+    ack_id = save_web_message(sid, 'bot', bt('photo_processing', img_lang))
 
     # Mark processing in bot_state
     current_state = get_bot_state(sid)
@@ -1016,8 +984,9 @@ def _process_web_image(phone: str, store_id: int, filepath: str,
         page_date     = parsed.get('date')
 
         if not txns:
+            web_lang = language  # passed from caller
             reply = (parsed.get('response_message') or
-                     "Photo se kuch nahi mila 🤔\nClear photo bhejiye ya manually type karein.")
+                     bt('photo_empty', web_lang))
             save_web_message(store_id, 'bot', reply)
         else:
             store = get_or_create_store(phone)

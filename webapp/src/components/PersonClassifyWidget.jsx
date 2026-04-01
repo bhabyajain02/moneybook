@@ -1,13 +1,14 @@
 import { useState } from 'react'
+import { t } from '../translations.js'
 
-const CATEGORIES = [
-  { key: 'staff',         label: 'Staff',         icon: '👷' },
-  { key: 'customer',      label: 'Customer',      icon: '🛒' },
-  { key: 'store_expense', label: 'Store Expense',  icon: '🏪' },
-  { key: 'other',         label: 'Other',         icon: '📋' },
+const CATEGORY_KEYS = [
+  { key: 'staff',         tKey: 'cat_staff',         icon: '👷' },
+  { key: 'customer',      tKey: 'cat_customer',      icon: '🛒' },
+  { key: 'store_expense', tKey: 'cat_store_expense',  icon: '🏪' },
+  { key: 'other',         tKey: 'cat_other',         icon: '📋' },
 ]
 
-export default function PersonClassifyWidget({ persons, staffOptions: initialStaffOptions, onComplete, onCancel }) {
+export default function PersonClassifyWidget({ persons, staffOptions: initialStaffOptions, onComplete, onCancel, language }) {
   // { [name]: { category, staffName?, isNewStaff? } }
   const [classifications, setClassifications] = useState({})
   // Track new staff names added during this session so subsequent dropdowns show them
@@ -77,11 +78,11 @@ export default function PersonClassifyWidget({ persons, staffOptions: initialSta
     <div className="ledger-overlay">
       <div className="ledger-panel classify-widget-panel">
         <div className="ledger-header">
-          <span className="ledger-title">👤 Classify Persons</span>
+          <span className="ledger-title">{t('classify_title', language)}</span>
           <button className="ledger-close-btn" onClick={onCancel}>✕</button>
         </div>
         <div className="classify-widget-body">
-          <p className="classify-widget-hint">Who are these people? Select a category for each.</p>
+          <p className="classify-widget-hint">{t('classify_hint', language)}</p>
           {persons.map(p => {
             const sel = classifications[p.name]?.category
             const isNew = classifications[p.name]?.isNewStaff
@@ -94,13 +95,13 @@ export default function PersonClassifyWidget({ persons, staffOptions: initialSta
                   </div>
                 )}
                 <div className="classify-btn-row">
-                  {CATEGORIES.map(c => (
+                  {CATEGORY_KEYS.map(c => (
                     <button
                       key={c.key}
                       className={`classify-cat-btn${sel === c.key ? ' active' : ''}`}
                       onClick={() => setCategory(p.name, c.key)}
                     >
-                      {c.icon} {c.label}
+                      {c.icon} {t(c.tKey, language)}
                     </button>
                   ))}
                 </div>
@@ -110,18 +111,18 @@ export default function PersonClassifyWidget({ persons, staffOptions: initialSta
                     value={classifications[p.name]?.staffName || ''}
                     onChange={e => setStaffName(p.name, e.target.value)}
                   >
-                    <option value="">— Select existing staff or add new —</option>
+                    <option value="">— {t('select_staff_ph', language)} —</option>
                     {allStaffOptions.map(s => (
                       <option key={s} value={s}>{s}</option>
                     ))}
-                    <option value="__new__">➕ Add new staff</option>
+                    <option value="__new__">➕ {t('add_new_staff', language)}</option>
                   </select>
                 )}
                 {sel === 'staff' && isNew && (
                   <div className="classify-new-staff-row">
                     <input
                       className="classify-new-staff-input"
-                      placeholder="Type new staff name..."
+                      placeholder={t('new_staff_ph', language)}
                       value={classifications[p.name]?.staffName || ''}
                       onChange={e => setNewStaffInput(p.name, e.target.value)}
                       onBlur={() => confirmNewStaff(p.name)}
@@ -148,7 +149,7 @@ export default function PersonClassifyWidget({ persons, staffOptions: initialSta
             disabled={!allClassified}
             onClick={handleDone}
           >
-            ✅ Continue ({Object.values(classifications).filter(c => {
+            ✅ {t('continue_btn', language)} ({Object.values(classifications).filter(c => {
               if (!c?.category) return false
               if (c.category === 'staff' && !c.staffName?.trim()) return false
               return true

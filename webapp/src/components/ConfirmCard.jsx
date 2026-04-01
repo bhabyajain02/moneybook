@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { quickParse } from '../api.js'
+import { t } from '../translations.js'
 
 // Extract clean person name from a value that might be a full sentence
 // e.g. "Dues received from Sanjiv Mishra" → "Sanjiv Mishra"
@@ -24,6 +25,12 @@ export const TYPE_OPTIONS = [
   { value: 'other',             label: '📋 Other' },
 ]
 
+export function getTypeOptions(language) {
+  return TYPE_OPTIONS.map(o => ({ value: o.value, label: t(o.key, language) }))
+}
+
+export const TYPE_OPTIONS = TYPE_OPTIONS.map(o => ({ value: o.value, label: t(o.key) }))
+
 export const TYPE_COLORS = {
   sale:'#25D366', receipt:'#25D366', dues_given:'#E53935',
   dues_received:'#25D366', expense:'#FF7043', bank_deposit:'#9C27B0',
@@ -41,7 +48,7 @@ export function fmtRs(val) {
 }
 
 // ── Inline edit form (shared by both table and card layout) ──────
-export function EditForm({ txn, onSave, onDiscard }) {
+export function EditForm({ txn, onSave, onDiscard, language }) {
   const [draft, setDraft]   = useState({ ...txn })
   const [saving, setSaving] = useState(false)
   const [more,   setMore]   = useState(false)
@@ -64,13 +71,13 @@ export function EditForm({ txn, onSave, onDiscard }) {
   return (
     <div className="inline-edit-form">
       <div className="txn-edit-grid">
-        <label>Description</label>
+        <label>{t('description_label', language)}</label>
         <input type="text" value={draft.description || ''} placeholder="What was this?"
           onChange={e => setDraft({...draft, description: e.target.value})} />
-        <label>Amount ₹</label>
+        <label>{t('amount_label', language)}</label>
         <input type="number" inputMode="decimal" value={draft.amount}
           onChange={e => setDraft({...draft, amount: parseFloat(e.target.value) || 0})} />
-        <label>Person</label>
+        <label>{t('person_label', language)}</label>
         <input type="text" value={draft.person_name || ''} placeholder="Name (optional)"
           onChange={e => setDraft({...draft, person_name: e.target.value || null})} />
       </div>
@@ -81,13 +88,13 @@ export function EditForm({ txn, onSave, onDiscard }) {
         <div className="txn-edit-grid" style={{ marginTop: 6 }}>
           <label>Type</label>
           <select value={draft.type} onChange={e => setDraft({...draft, type: e.target.value})}>
-            {TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            {getTypeOptions(language).map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
       )}
       <div className="txn-edit-actions">
         <button className="txn-save-btn" onClick={save} disabled={saving}>
-          {saving ? '⏳' : '✅ Done'}
+          {saving ? '⏳' : t('done_btn', language)}
         </button>
         <button className="txn-cancel-btn" onClick={onDiscard}>Discard</button>
       </div>
@@ -99,8 +106,8 @@ export function EditForm({ txn, onSave, onDiscard }) {
 export function ConfPill({ value }) {
   if (value == null) return null
   const v  = Math.round(value)
-  const bg = v >= 80 ? '#dcfce7' : v >= 55 ? '#fef3c7' : '#fee2e2'
-  const fg = v >= 80 ? '#166534' : v >= 55 ? '#92400e' : '#991b1b'
+  const bg = v >= 80 ? '#dcfce7' : v >= 70 ? '#fef3c7' : '#fee2e2'
+  const fg = v >= 80 ? '#166534' : v >= 70 ? '#92400e' : '#991b1b'
   return (
     <span className="txn-conf" style={{ background: bg, color: fg }} title={`Confidence: ${v}/100`}>
       {v}
@@ -111,7 +118,7 @@ export function ConfPill({ value }) {
 // ── TRANSACTION TABLE — one row per parsed transaction, always ───
 // Iterates txns[] directly so every entry always gets ✏️ and 🗑️.
 // display.headers used for column context when available.
-function TransactionTable({ txns, onUpdate, onDelete }) {
+function TransactionTable({ txns, onUpdate, onDelete, language }) {
   const [editingIdx, setEditingIdx] = useState(null)
 
   return (
@@ -119,8 +126,8 @@ function TransactionTable({ txns, onUpdate, onDelete }) {
       <table className="notebook-table">
         <thead>
           <tr>
-            <th>Description</th>
-            <th className="nb-th-num">Amount</th>
+            <th>{t('description_label', language)}</th>
+            <th className="nb-th-num">{t('amount_label', language)}</th>
             <th className="nb-actions-col nb-actions-sticky"></th>
           </tr>
         </thead>
@@ -136,6 +143,7 @@ function TransactionTable({ txns, onUpdate, onDelete }) {
                       txn={txn}
                       onSave={u => { onUpdate(i, u); setEditingIdx(null) }}
                       onDiscard={() => setEditingIdx(null)}
+                      language={language}
                     />
                   </td>
                 </tr>
@@ -143,7 +151,7 @@ function TransactionTable({ txns, onUpdate, onDelete }) {
             }
 
             const color     = TYPE_COLORS[txn.type] || '#ccc'
-            const typeLabel = TYPE_OPTIONS.find(t => t.value === txn.type)?.label || txn.type
+            const typeLabel = getTypeOptions(language).find(o => o.value === txn.type)?.label || txn.type
 
             return (
               <tr key={i} className="nb-row-data" style={{ borderLeftColor: color }}>
@@ -177,10 +185,10 @@ function TransactionTable({ txns, onUpdate, onDelete }) {
 }
 
 // ── CARD LIST — fallback for text messages ───────────────────────
-function TxnCard({ txn, index, onChange, onDelete }) {
+function TxnCard({ txn, index, onChange, onDelete, language }) {
   const [editing, setEditing] = useState(false)
   const color    = TYPE_COLORS[txn.type] || '#666'
-  const typeLabel = TYPE_OPTIONS.find(t => t.value === txn.type)?.label || txn.type
+  const typeLabel = getTypeOptions(language).find(o => o.value === txn.type)?.label || txn.type
   const modeIcon  = MODE_ICONS[txn.payment_mode] || '💵'
 
   if (!editing) {
@@ -213,13 +221,14 @@ function TxnCard({ txn, index, onChange, onDelete }) {
         txn={txn}
         onSave={u => { onChange(index, u); setEditing(false) }}
         onDiscard={() => setEditing(false)}
+        language={language}
       />
     </div>
   )
 }
 
 // ── Add entry form ───────────────────────────────────────────────
-export function AddEntryForm({ onAdd, onCancel }) {
+export function AddEntryForm({ onAdd, onCancel, language }) {
   const [desc, setDesc]     = useState('')
   const [amount, setAmount] = useState('')
   const [person, setPerson] = useState('')
@@ -242,7 +251,7 @@ export function AddEntryForm({ onAdd, onCancel }) {
 
   return (
     <div className="add-entry-form">
-      <div className="add-entry-title">➕ New Entry</div>
+      <div className="add-entry-title">{t('new_entry', language)}</div>
       <form onSubmit={handleSubmit}>
         <input className="add-entry-input" type="text" placeholder="Description (e.g. Rent paid)"
           value={desc} onChange={e => setDesc(e.target.value)} required />
@@ -262,7 +271,7 @@ export function AddEntryForm({ onAdd, onCancel }) {
 }
 
 // ── Main ConfirmCard ─────────────────────────────────────────────
-export default function ConfirmCard({ metadata, onConfirm, onCancel, onPendingEdit }) {
+export default function ConfirmCard({ metadata, onConfirm, onCancel, onPendingEdit, language }) {
   const rawTxns  = metadata.pending_transactions || []
   const initDate = metadata.page_date || rawTxns[0]?.date || new Date().toISOString().slice(0, 10)
 
@@ -331,6 +340,7 @@ export default function ConfirmCard({ metadata, onConfirm, onCancel, onPendingEd
         txns={txns}
         onUpdate={handleUpdate}
         onDelete={handleDelete}
+        language={language}
       />
 
       {/* Add missed entry */}
@@ -338,16 +348,17 @@ export default function ConfirmCard({ metadata, onConfirm, onCancel, onPendingEd
         <AddEntryForm
           onAdd={txn => { setTxns(prev => [...prev, txn]); setAdding(false) }}
           onCancel={() => setAdding(false)}
+          language={language}
         />
       ) : (
         <button className="add-entry-btn" onClick={() => setAdding(true)}>
-          ➕ Add missed entry
+          {t('add_entry', language)}
         </button>
       )}
 
       <div className="confirm-card-actions">
         <button className="confirm-save-btn" onClick={() => onConfirm(liveTxns)}>
-          ✅ Save All ({liveTxns.length})
+          {t('save_all', language)} ({liveTxns.length})
         </button>
         <button className="confirm-cancel-btn" onClick={onCancel}>❌</button>
       </div>
