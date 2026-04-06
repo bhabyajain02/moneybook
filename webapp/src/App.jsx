@@ -41,6 +41,8 @@ export default function App() {
   function handleLanguageChange(key) {
     localStorage.setItem(LS_LANG, key)
     setLanguage(key)
+    // Also persist to backend
+    if (phone) updateProfile(phone, { language: key }).catch(() => {})
   }
 
   if (!phone) {
