@@ -548,8 +548,8 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
       try {
         const editedTxns = [
           ...rowsToTxns(inRows, outRows, date),
-          ...validDuesIn .map(r => ({ type: 'dues_received', description: r.desc || 'Dues received', bill_number: r.billNo || '', amount: parseFloat(r.amount) || 0, date })),
-          ...validDuesOut.map(r => ({ type: 'dues_given',    description: r.desc || 'Dues given',    bill_number: r.billNo || '', amount: parseFloat(r.amount) || 0, date })),
+          ...validDuesIn .map(r => ({ type: 'dues_received', description: r.desc || 'Dues received', ...(r.desc ? { person_name: r.desc } : {}), bill_number: r.billNo || '', amount: parseFloat(r.amount) || 0, date })),
+          ...validDuesOut.map(r => ({ type: 'dues_given',    description: r.desc || 'Dues given',    ...(r.desc ? { person_name: r.desc } : {}), bill_number: r.billNo || '', amount: parseFloat(r.amount) || 0, date })),
           ...validStaffIn  .map(r => ({ type: 'receipt', description: r.name || 'Staff',         person_name: r.name || '', tag: 'staff_expense', amount: parseFloat(r.amount) || 0, date })),
           ...validStaffOut .map(r => ({ type: 'expense', description: r.name || 'Staff expense', person_name: r.name || '', tag: 'staff_expense', amount: parseFloat(r.amount) || 0, date })),
           ...validOthersIn .map(r => ({ type: 'other',   description: r.name || 'Others', person_name: r.name || '', amount: parseFloat(r.amount) || 0, date, column: 'in' })),
@@ -568,8 +568,8 @@ export default function LedgerEntry({ phone, language, onClose, onClassified, pr
       const rows = [
         ...validIn      .map(r => ({ particulars: r.particulars,                  amount: r.amount, column: 'in',  section: 'general' })),
         ...validOut     .map(r => ({ particulars: r.particulars,                  amount: r.amount, column: 'out', section: 'general', tag: r.tag || undefined })),
-        ...validDuesIn  .map(r => ({ particulars: duesBillDesc(r,'Dues received'), amount: r.amount, column: 'in',  section: 'dues' })),
-        ...validDuesOut .map(r => ({ particulars: duesBillDesc(r,'Dues given'),    amount: r.amount, column: 'out', section: 'dues' })),
+        ...validDuesIn  .map(r => ({ particulars: duesBillDesc(r,'Dues received'), amount: r.amount, column: 'in',  section: 'dues', ...(r.desc ? { person_name: r.desc } : {}) })),
+        ...validDuesOut .map(r => ({ particulars: duesBillDesc(r,'Dues given'),    amount: r.amount, column: 'out', section: 'dues', ...(r.desc ? { person_name: r.desc } : {}) })),
         ...validStaffIn  .map(r => ({ particulars: r.name || 'Staff',             amount: r.amount, column: 'in',  section: 'staff', person_name: r.name })),
         ...validStaffOut .map(r => ({ particulars: r.name || 'Staff expense',     amount: r.amount, column: 'out', section: 'staff', person_name: r.name })),
         ...validOthersIn .map(r => ({ particulars: r.name || 'Others',            amount: r.amount, column: 'in',  section: 'others', person_name: r.name })),

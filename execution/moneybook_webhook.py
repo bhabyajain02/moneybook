@@ -37,7 +37,8 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / '.env', overrid
 sys.path.insert(0, os.path.dirname(__file__))
 
 from moneybook_db import (
-    init_db,
+    init_db, migrate_fix_negative_udhaar, migrate_backfill_dues_person_name,
+    migrate_clean_dues_given_names, _extract_name_from_desc,
     get_or_create_store, get_store_by_phone, update_store, get_all_active_stores,
     get_bot_state, set_bot_state, clear_bot_state,
     add_transaction,
@@ -48,7 +49,7 @@ from moneybook_db import (
     get_store_segment, promote_correction,
     save_web_message, get_web_messages, clear_store_data,
     get_daily_trend, get_staff_payments, get_payment_mode_split,
-    get_top_receivers, get_others_summary, get_dues_with_detail, get_staff_detail,
+    get_top_receivers, get_others_summary, get_dues_with_detail, get_dues_received, get_staff_detail,
     get_store_expense_tags,
     update_udhaar_contact,
     update_message_metadata, delete_transaction,
@@ -670,6 +671,9 @@ def on_startup():
     # Ensure uploads directory exists
     os.makedirs(os.path.join(os.path.dirname(__file__), '..', '.tmp', 'uploads'), exist_ok=True)
     init_db()
+    migrate_fix_negative_udhaar()          # Fix negative udhaar balances from wrong column usage
+    migrate_backfill_dues_person_name()    # Backfill person_name on old dues_received rows
+    migrate_clean_dues_given_names()       # Fix person_name/description on dues_given that had full sentence
     _scheduler.start()
     log.info("🚀 MoneyBook v2 started.")
 
@@ -1444,8 +1448,12 @@ async def api_ledger_classify(req: LedgerClassifyRequest):
                 t['needs_tracking'] = False
                 t['person_category'] = 'staff'
             elif section == 'dues':
+                # Left/IN column = "Udhaar receivable" → dues_given (creates +balance, shows in Dues tab)
+                # Right/OUT column = "Payment received" → dues_received (reduces balance)
+                t['type'] = 'dues_received' if col == 'out' else 'dues_given'
                 if person:
                     save_person(store['id'], person, 'customer')
+                    t['person_name'] = person  # must persist so add_transaction updates udhaar
                 t['needs_tracking'] = False
                 t['person_category'] = 'customer'
             elif section == 'others':
@@ -1456,6 +1464,26 @@ async def api_ledger_classify(req: LedgerClassifyRequest):
                     save_person(store['id'], person, 'supplier')
                 t['needs_tracking'] = False
                 t['person_category'] = 'supplier'
+            elif section == 'general' and col == 'out':
+                # General OUT column: if AI mistakenly set dues_received/udhaar_received,
+                # flip to dues_given — OUT means we gave credit, not that we received payment.
+                if t.get('type') in ('dues_received', 'udhaar_received'):
+                    import re as _re
+                    t['type'] = 'dues_given' if t['type'] == 'dues_received' else 'udhaar_given'
+                    # Extract clean person name from description
+                    raw_desc = t.get('description', '')
+                    if not t.get('person_name') or len((t.get('person_name') or '').split()) > 4:
+                        extracted = _extract_name_from_desc(raw_desc) or t.get('person_name', '')
+                        if extracted:
+                            t['person_name'] = extracted
+                            save_person(store['id'], extracted, 'customer')
+                    # Clean description: "received from X" → "given to X"
+                    if raw_desc:
+                        clean = _re.sub(r'\breceived\b', 'given', raw_desc, flags=_re.IGNORECASE)
+                        clean = _re.sub(r'\bfrom\b', 'to', clean, flags=_re.IGNORECASE)
+                        t['description'] = clean
+                    t['needs_tracking'] = False
+                    t['person_category'] = 'customer'
             elif section != 'general':
                 # Any other tagged section — skip classification
                 t['needs_tracking'] = False
@@ -1537,12 +1565,13 @@ async def api_quick_parse(req: QuickParseRequest):
 # ─────────────────────────────────────────────────────────────────
 
 @app.get('/api/dues')
-async def api_dues(phone: str):
-    """Returns udhaar list with transaction details."""
-    store = get_or_create_store(phone)
-    sid   = store['id']
-    dues  = get_dues_with_detail(sid)
-    return {'dues': dues}
+async def api_dues(phone: str, start: str = None, end: str = None):
+    """Returns pending dues + dues received, with optional date range for received."""
+    store    = get_or_create_store(phone)
+    sid      = store['id']
+    dues     = get_dues_with_detail(sid)
+    received = get_dues_received(sid, start=start, end=end)
+    return {'dues': dues, 'dues_received': received}
 
 
 @app.post('/api/dues/contact')

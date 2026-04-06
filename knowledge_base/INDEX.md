@@ -1,7 +1,7 @@
 # Knowledge Base Index
 
 > Auto-updated after every conversation. Portable Markdown — plug into any AI tool.
-> Last updated: 2026-03-27
+> Last updated: 2026-04-04
 
 ## How to use this KB
 - **With Claude/ChatGPT/Gemini**: Paste the relevant topic file as context
@@ -43,6 +43,7 @@ Chronological record of all conversations and what was built/learned.
 | 2026-03-27 | [Initial Setup](sessions/2026-03-27_initial-setup.md) | Built 3-layer architecture, Knowledge Doc protocol, Nano Banana Pro integration, Knowledge Base |
 | 2026-03-28 | [Built MoneyBook: WhatsApp Financial Tracker](sessions/2026-03-28_built-moneybook-whatsapp-financial-tracker.md) | Webhook services often have strict response time limits (e.g., Twilio's 15s); offload long-running tasks to background processes and use the service's REST API for delayed responses.; Explicit `pathlib.Path` resolution is crucial for reliable `.env` file loading, especially in complex project structures. |
 | 2026-03-28 | [MoneyBook Technical Reference Document Creation](sessions/2026-03-28_moneybook-technical-reference-document-creation.md) | Understanding the breadth of topics required for a complete technical reference document, from product overview to deployment and roadmap.; Gained detailed insight into MoneyBook's specific components, including its 6-table SQL schema, 4 Python files, 3 AI prompts, and 10 identified bugs with fixes. |
+| 2026-04-04 | [React Native Conversion](sessions/2026-04-04_react-native-conversion.md) | Converted MoneyBook web frontend (React+Vite) to React Native (Expo 51). Created 21 files in moneybook-rn/. Key patterns: AsyncStorage for localStorage, react-navigation for tab routing, expo-image-picker for file input, Modal+FlatList for select dropdowns, View-based bars for SVG charts, Animated.Value for CSS animations. Backend unchanged. |
 
 ---
 

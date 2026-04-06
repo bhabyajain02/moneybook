@@ -1,4 +1,10 @@
-const BASE = '/api'
+// ── MoneyBook API client (React Native version) ───────────────────────────
+// Identical functionality to webapp/src/api.js — only BASE_URL changed.
+// React Native has fetch built-in, so all calls work unchanged.
+
+import { BASE_URL } from './config'
+
+const BASE = BASE_URL
 
 // Safely parse JSON — returns {} if the response is HTML/empty (e.g. proxy error)
 async function safeJson(r) {
@@ -7,11 +13,9 @@ async function safeJson(r) {
 }
 
 export async function checkPhone(phone) {
-  // Read-only check — does NOT create a store record
   const r = await fetch(`${BASE}/check?phone=${encodeURIComponent(phone)}`)
   if (!r.ok) return null
   return r.json()
-  // returns { exists: bool, name: string, phone: string }
 }
 
 export async function login(phone, storeName = '') {
@@ -33,26 +37,28 @@ export async function sendMessage(phone, body, language = 'hinglish') {
   const data = await safeJson(r)
   if (!r.ok) throw new Error(data.detail || `Server error (${r.status})`)
   return data
-  // returns { user_message_id, bot_message_id, bot_reply, quick_replies, processing }
 }
 
-export async function sendImage(phone, file, language = 'hinglish') {
+export async function sendImage(phone, fileUri, language = 'hinglish') {
+  // React Native uses FormData with uri instead of File object
   const fd = new FormData()
   fd.append('phone', phone)
-  fd.append('file', file)
+  fd.append('file', {
+    uri: fileUri,
+    name: 'photo.jpg',
+    type: 'image/jpeg',
+  })
   fd.append('language', language)
   const r = await fetch(`${BASE}/image`, { method: 'POST', body: fd })
   const data = await safeJson(r)
   if (!r.ok) throw new Error(data.detail || `Server error (${r.status})`)
   return data
-  // returns { user_message_id, processing: true }
 }
 
 export async function pollMessages(phone, afterId = 0) {
   const r = await fetch(`${BASE}/messages?phone=${encodeURIComponent(phone)}&after_id=${afterId}`)
   if (!r.ok) return { messages: [], processing: false }
   return r.json()
-  // returns { messages: [{id, direction, body, media_url, created_at}], processing }
 }
 
 export async function fetchAnalytics(phone, period = 'day', start = null, end = null) {
@@ -95,7 +101,6 @@ export async function fetchExpenseCategories(phone) {
   const r = await fetch(`${BASE}/expense-categories?phone=${encodeURIComponent(phone)}`)
   if (!r.ok) return { categories: [] }
   return r.json()
-  // returns { categories: [{tag, label, emoji, count}] }
 }
 
 export async function confirmTransactions(phone, transactions, botMessageId = null, originalTransactions = null) {
@@ -121,7 +126,7 @@ export async function quickParse(description, amount, personName = '') {
     body: JSON.stringify({ description, amount: parseFloat(amount) || 0, person_name: personName }),
   })
   if (!r.ok) throw new Error('Parse failed')
-  return r.json()  // { transaction: {...} }
+  return r.json()
 }
 
 export async function deleteTransaction(phone, txnId) {
@@ -146,7 +151,6 @@ export async function classifyLedger(phone, date, rows, language = 'hinglish') {
   })
   if (!r.ok) throw new Error((await r.json()).detail || 'Classify failed')
   return r.json()
-  // returns { message_id, pending_transactions, response_message }
 }
 
 export async function classifyPersonsBatch(phone, classifications) {
@@ -171,7 +175,6 @@ export async function fetchProfile(phone) {
   const r = await fetch(`${BASE}/profile?phone=${encodeURIComponent(phone)}`)
   if (!r.ok) throw new Error('Profile fetch failed')
   return r.json()
-  // returns { name, language, segment, joined, phone }
 }
 
 export async function updateProfile(phone, updates) {
@@ -188,19 +191,17 @@ export async function dismissMessage(phone, botMessageId) {
   const r = await fetch(`${BASE}/dismiss?phone=${encodeURIComponent(phone)}&bot_message_id=${botMessageId}`, {
     method: 'POST',
   })
-  if (!r.ok) return  // non-critical
+  if (!r.ok) return
   return r.json()
 }
 
 export async function dismissBulk(phone, messageIds, cancelText = null) {
-  // Bulk-dismiss ack messages and optionally persist a cancel message.
-  // Returns { ok, cancel_msg_id } — cancel_msg_id is the DB id of the persisted cancel message (or null).
   const r = await fetch(`${BASE}/dismiss-bulk`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ phone, message_ids: messageIds, cancel_text: cancelText }),
   })
-  if (!r.ok) return { ok: false, cancel_msg_id: null }  // best-effort, non-critical
+  if (!r.ok) return { ok: false, cancel_msg_id: null }
   return r.json()
 }
 
@@ -215,5 +216,5 @@ export async function speakLedger(inEntries, outEntries, dateStr, language = 'hi
     }),
   })
   if (!r.ok) throw new Error('TTS unavailable')
-  return r.json()  // { audio: '<base64 mp3>', voice: '...' }
+  return r.json()
 }

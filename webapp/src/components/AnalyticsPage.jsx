@@ -298,10 +298,9 @@ export default function AnalyticsPage({
     const collections = [];
     let staffTotal = kpis.staff_expenses || 0; // staff_salary from kpis
     let discountTotal = 0;
-    const storeExpenseByTag = {};  // tag → amount
+    const storeExpenseByTag = {}; // tag → amount
 
     Object.entries(data.expense_tags || {}).forEach(([tag, amt]) => {
-
       const lower = tag.toLowerCase();
 
       // ✅ HANDLE DISCOUNT FIRST
@@ -403,9 +402,6 @@ export default function AnalyticsPage({
               </span>
             </span>
           </div>
-          <span style={{ fontSize: 20, cursor: "pointer", opacity: 0.85 }}>
-            ⚙️
-          </span>
         </div>
 
         {/* Total expenses */}
