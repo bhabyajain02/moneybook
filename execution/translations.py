@@ -8,7 +8,7 @@ _T = {
     # ── Onboarding ──────────────────────────────────────────────
     'welcome': {
         'english':  "🏪 *Welcome to MoneyBook!*\n\nYour digital ledger is getting ready.\n\nWhat is your store's name?",
-        'hindi':    "🏪 *MoneyBook mein aapka swagat hai!*\n\nAapka digital khata tayar ho raha hai.\n\nApne store ka naam kya hai?",
+        'hindi':    "🏪 *MoneyBook में आपका स्वागत है!*\n\nआपका डिजिटल खाता तैयार हो रहा है।\n\nआपकी दुकान का नाम क्या है?",
         'hinglish': "🏪 *MoneyBook mein aapka swagat hai!*\n\nAapka digital khata tayar ho raha hai.\n\nApne store ka naam kya hai?",
         'gujarati': "🏪 *MoneyBook માં આપનું સ્વાગત છે!*\n\nઆપનું ડિજિટલ ખાતું તૈયાર થઈ રહ્યું છે.\n\nઆપની દુકાનનું નામ શું છે?",
         'marathi':  "🏪 *MoneyBook मध्ये आपले स्वागत!*\n\nआपले डिजिटल खाते तयार होत आहे.\n\nआपल्या दुकानाचे नाव काय आहे?",
@@ -20,7 +20,7 @@ _T = {
     },
     'store_name_set': {
         'english':  "✅ *{name}* — great name!\n\n",
-        'hindi':    "✅ *{name}* — sundar naam!\n\n",
+        'hindi':    "✅ *{name}* — सुंदर नाम!\n\n",
         'hinglish': "✅ *{name}* — sundar naam!\n\n",
         'gujarati': "✅ *{name}* — સરસ નામ!\n\n",
         'marathi':  "✅ *{name}* — छान नाव!\n\n",
@@ -32,7 +32,7 @@ _T = {
     },
     'segment_ask': {
         'english':  "What is your business type?\n\n1️⃣ Textile / Clothing\n2️⃣ Grocery / Kirana\n3️⃣ Pharmacy / Medicine\n4️⃣ Hardware / Tools\n5️⃣ Food / Restaurant\n6️⃣ Electronics\n7️⃣ Something else\n\n_(Send a number — 1 to 7)_",
-        'hindi':    "Aapka business kya hai?\n\n1️⃣ Kapda / Textile\n2️⃣ Grocery / Kiryana\n3️⃣ Dawai / Pharmacy\n4️⃣ Hardware / Tools\n5️⃣ Khana / Food\n6️⃣ Electronics\n7️⃣ Kuch aur / Other\n\n_(Number bhejein — 1 se 7)_",
+        'hindi':    "आपका व्यवसाय क्या है?\n\n1️⃣ कपड़ा / Textile\n2️⃣ किराना / Grocery\n3️⃣ दवाई / Pharmacy\n4️⃣ Hardware / Tools\n5️⃣ खाना / Food\n6️⃣ Electronics\n7️⃣ कुछ और\n\n_(नंबर भेजें — 1 से 7)_",
         'hinglish': "Aapka business kya hai?\n\n1️⃣ Kapda / Textile\n2️⃣ Grocery / Kiryana\n3️⃣ Dawai / Pharmacy\n4️⃣ Hardware / Tools\n5️⃣ Khana / Food\n6️⃣ Electronics\n7️⃣ Kuch aur / Other\n\n_(Number bhejein — 1 se 7)_",
         'gujarati': "તમારો ધંધો શું છે?\n\n1️⃣ કાપડ / Textile\n2️⃣ કરિયાણા / Grocery\n3️⃣ દવા / Pharmacy\n4️⃣ Hardware / Tools\n5️⃣ ખાણું / Food\n6️⃣ Electronics\n7️⃣ બીજું કંઈ\n\n_(નંબર મોકલો — 1 થી 7)_",
         'marathi':  "तुमचा व्यवसाय काय आहे?\n\n1️⃣ कापड / Textile\n2️⃣ किराणा / Grocery\n3️⃣ औषध / Pharmacy\n4️⃣ Hardware / Tools\n5️⃣ खाणे / Food\n6️⃣ Electronics\n7️⃣ इतर\n\n_(नंबर पाठवा — 1 ते 7)_",
@@ -44,7 +44,7 @@ _T = {
     },
     'segment_set': {
         'english':  "✅ Segment set: *{label}*\n\nI'll now understand entries based on your business.\n\n",
-        'hindi':    "✅ Segment set: *{label}*\n\nAb se main aapke business ke hisaab se entries samjhunga.\n\n",
+        'hindi':    "✅ सेगमेंट सेट: *{label}*\n\nअब मैं आपके व्यवसाय के हिसाब से एंट्री समझूंगा।\n\n",
         'hinglish': "✅ Segment set: *{label}*\n\nAb se main aapke business ke hisaab se entries samjhunga.\n\n",
         'gujarati': "✅ સેગમેન્ટ સેટ: *{label}*\n\nહવે હું તમારા ધંધા પ્રમાણે એન્ટ્રી સમજીશ.\n\n",
         'marathi':  "✅ सेगमेंट सेट: *{label}*\n\nआता मी तुमच्या व्यवसायानुसार एंट्री समजेन.\n\n",
@@ -58,7 +58,7 @@ _T = {
     # ── Help ────────────────────────────────────────────────────
     'help_msg': {
         'english':  "🏪 *MoneyBook — Your Digital Ledger*\n\n*Log a transaction (write naturally):*\n• Sale 5000 cash\n• Raju took 500 on credit\n• CD A. Tiwari 695 _(Cash Discount)_\n• Electricity bill 800 paid\n• Deposited 20000 in bank\n• 📷 Send a photo of your notebook page\n\n*Commands:*\n• /summary → Today's summary\n• /month → This month's summary\n• /quarter → This quarter's summary\n• /year → This year's summary\n• /udhaar → Outstanding dues list\n• /help → This message",
-        'hindi':    "🏪 *MoneyBook — Aapka Digital Khata*\n\n*Transaction log karo (naturally likhein):*\n• Sale 5000 cash\n• Raju ne 500 udhaar liya\n• CD A. Tiwari 695  _(Cash Discount)_\n• Bijli bill 800 diya\n• Bank mein 20000 jama kiya\n• 📷 Notebook page ki photo bhejein\n\n*Commands:*\n• /summary  → Aaj ka hisaab\n• /month    → Is mahine ka summary\n• /quarter  → Is quarter ka summary\n• /year     → Is saal ka summary\n• /udhaar   → Outstanding udhaar list\n• /help     → Yeh message",
+        'hindi':    "🏪 *MoneyBook — आपका डिजिटल खाता*\n\n*लेन-देन दर्ज करें (स्वाभाविक रूप से लिखें):*\n• बिक्री 5000 नकद\n• राजू ने 500 उधार लिया\n• CD A. Tiwari 695  _(कैश डिस्काउंट)_\n• बिजली बिल 800 दिया\n• बैंक में 20000 जमा किया\n• 📷 नोटबुक पेज की फोटो भेजें\n\n*Commands:*\n• /summary  → आज का हिसाब\n• /month    → इस महीने का सारांश\n• /quarter  → इस तिमाही का सारांश\n• /year     → इस साल का सारांश\n• /udhaar   → बकाया उधार सूची\n• /help     → यह संदेश",
         'hinglish': "🏪 *MoneyBook — Aapka Digital Khata*\n\n*Transaction log karo (naturally likhein):*\n• Sale 5000 cash\n• Raju ne 500 udhaar liya\n• CD A. Tiwari 695  _(Cash Discount)_\n• Bijli bill 800 diya\n• Bank mein 20000 jama kiya\n• 📷 Notebook page ki photo bhejein\n\n*Commands:*\n• /summary  → Aaj ka hisaab\n• /month    → Is mahine ka summary\n• /quarter  → Is quarter ka summary\n• /year     → Is saal ka summary\n• /udhaar   → Outstanding udhaar list\n• /help     → Yeh message",
         'gujarati': "🏪 *MoneyBook — તમારું ડિજિટલ ખાતું*\n\n*ટ્રાન્ઝેક્શન લખો (કુદરતી રીતે):*\n• વેચાણ 5000 રોકડ\n• રાજુએ 500 ઉધાર લીધા\n• CD A. Tiwari 695 _(કેશ ડિસ્કાઉન્ટ)_\n• વીજળી બિલ 800 ચૂકવ્યું\n• બેંકમાં 20000 જમા કર્યા\n• 📷 નોટબુક પેજનો ફોટો મોકલો\n\n*Commands:*\n• /summary → આજનો હિસાબ\n• /month → આ મહિનાનો સારાંશ\n• /quarter → આ ક્વાર્ટરનો સારાંશ\n• /year → આ વર્ષનો સારાંશ\n• /udhaar → બાકી ઉધાર યાદી\n• /help → આ સંદેશ",
         'marathi':  "🏪 *MoneyBook — तुमचे डिजिटल खाते*\n\n*व्यवहार नोंदवा (नैसर्गिकपणे लिहा):*\n• विक्री 5000 रोख\n• राजूने 500 उधार घेतले\n• CD A. Tiwari 695 _(कॅश डिस्काउंट)_\n• वीज बिल 800 भरले\n• बँकेत 20000 जमा केले\n• 📷 वहीच्या पानाचा फोटो पाठवा\n\n*Commands:*\n• /summary → आजचा हिशोब\n• /month → या महिन्याचा सारांश\n• /quarter → या तिमाहीचा सारांश\n• /year → या वर्षाचा सारांश\n• /udhaar → थकीत उधारी यादी\n• /help → हा संदेश",
@@ -72,7 +72,7 @@ _T = {
     # ── Photo processing ────────────────────────────────────────
     'photo_processing': {
         'english':  "📷 Photo received! Reading it... please wait ⏳",
-        'hindi':    "📷 Photo mil gayi! Padh raha hoon... thoda wait karein ⏳",
+        'hindi':    "📷 फोटो मिल गई! पढ़ रहा हूँ... थोड़ा इंतज़ार करें ⏳",
         'hinglish': "📷 Photo mil gayi! Padh raha hoon... thoda wait karein ⏳",
         'gujarati': "📷 ફોટો મળ્યો! વાંચી રહ્યો છું... થોડી રાહ જુઓ ⏳",
         'marathi':  "📷 फोटो मिळाला! वाचत आहे... थोडे थांबा ⏳",
@@ -84,7 +84,7 @@ _T = {
     },
     'photo_empty': {
         'english':  "Couldn't read the photo 🤔\nPlease add entries manually using the 📋 ledger grid.",
-        'hindi':    "Photo padh nahi paaye 🤔\n📋 Ledger grid mein manually entry karein.",
+        'hindi':    "फोटो पढ़ नहीं पाए 🤔\n📋 लेजर ग्रिड में खुद एंट्री करें।",
         'hinglish': "Photo padh nahi paaye 🤔\n📋 Ledger grid mein manually entry karein.",
         'gujarati': "ફોટો વાંચી ન શક્યા 🤔\n📋 લેજર ગ્રિડમાં જાતે એન્ટ્રી કરો.",
         'marathi':  "फोटो वाचता आला नाही 🤔\n📋 लेजर ग्रिडमध्ये स्वतः एंट्री करा.",
@@ -96,7 +96,7 @@ _T = {
     },
     'photo_ocr_fail': {
         'english':  "Couldn't read entries clearly 🤔\nPlease add entries manually using the 📋 ledger grid.\n\n*Text found:*\n_{ocr}_",
-        'hindi':    "Entries clearly padh nahi paaye 🤔\n📋 Ledger grid mein manually entry karein.\n\n*Yeh text mila:*\n_{ocr}_",
+        'hindi':    "एंट्री स्पष्ट नहीं पढ़ पाए 🤔\n📋 लेजर ग्रिड में खुद एंट्री करें।\n\n*यह टेक्स्ट मिला:*\n_{ocr}_",
         'hinglish': "Entries clearly padh nahi paaye 🤔\n📋 Ledger grid mein manually entry karein.\n\n*Yeh text mila:*\n_{ocr}_",
         'gujarati': "એન્ટ્રી સ્પષ્ટ વાંચી ન શક્યા 🤔\n📋 લેજર ગ્રિડમાં જાતે એન્ટ્રી કરો.\n\n*આ ટેક્સ્ટ મળ્યો:*\n_{ocr}_",
         'marathi':  "एंट्री स्पष्ट वाचता आल्या नाहीत 🤔\n📋 लेजर ग्रिडमध्ये स्वतः एंट्री करा.\n\n*हा मजकूर मिळाला:*\n_{ocr}_",
@@ -110,7 +110,7 @@ _T = {
     # ── Confirmation flow ───────────────────────────────────────
     'confirm_saved': {
         'english':  "✅ *{count} entries saved!*\n\nReady for the next entry 📒",
-        'hindi':    "✅ *{count} entries save ho gayi!*\n\nAgle entry ke liye ready hoon 📒",
+        'hindi':    "✅ *{count} एंट्री सेव हो गई!*\n\nअगली एंट्री के लिए तैयार हूँ 📒",
         'hinglish': "✅ *{count} entries save ho gayi!*\n\nAgle entry ke liye ready hoon 📒",
         'gujarati': "✅ *{count} એન્ટ્રી સેવ થઈ!*\n\nઆગળની એન્ટ્રી માટે તૈયાર છું 📒",
         'marathi':  "✅ *{count} एंट्री सेव झाल्या!*\n\nपुढच्या एंट्रीसाठी तयार आहे 📒",
@@ -122,7 +122,7 @@ _T = {
     },
     'confirm_cancel': {
         'english':  "❌ Cancelled. Send a new entry.",
-        'hindi':    "❌ Cancel ho gaya. Naya entry bhejein.",
+        'hindi':    "❌ रद्द हो गया। नई एंट्री भेजें।",
         'hinglish': "❌ Cancel ho gaya. Naya entry bhejein.",
         'gujarati': "❌ રદ કરાયું. નવી એન્ટ્રી મોકલો.",
         'marathi':  "❌ रद्द केले. नवीन एंट्री पाठवा.",
@@ -134,7 +134,7 @@ _T = {
     },
     'confirm_help': {
         'english':  "Didn't understand 🤔\n\n• *yes* → Save all\n• *wrong 3* → Fix entry 3\n• *3 tag electricity* → Change tag of entry 3\n• *cancel* → Cancel\n\n",
-        'hindi':    "Samajh nahi aaya 🤔\n\n• *haan* → Sab save karo\n• *galat 3* → Entry 3 theek karo\n• *3 tag electricity* → Entry 3 ka tag badlo\n• *cancel* → Cancel\n\n",
+        'hindi':    "समझ नहीं आया 🤔\n\n• *हाँ* → सब सेव करो\n• *गलत 3* → एंट्री 3 ठीक करो\n• *3 tag electricity* → एंट्री 3 का टैग बदलो\n• *cancel* → रद्द\n\n",
         'hinglish': "Samajh nahi aaya 🤔\n\n• *haan* → Sab save karo\n• *galat 3* → Entry 3 theek karo\n• *3 tag electricity* → Entry 3 ka tag badlo\n• *cancel* → Cancel\n\n",
         'gujarati': "સમજાયું નહીં 🤔\n\n• *હા* → બધું સેવ કરો\n• *ખોટું 3* → એન્ટ્રી 3 સુધારો\n• *3 tag electricity* → એન્ટ્રી 3 નો ટેગ બદલો\n• *cancel* → રદ કરો\n\n",
         'marathi':  "समजले नाही 🤔\n\n• *हो* → सर्व सेव करा\n• *चूक 3* → एंट्री 3 दुरुस्त करा\n• *3 tag electricity* → एंट्री 3 चा टॅग बदला\n• *cancel* → रद्द करा\n\n",
@@ -146,7 +146,7 @@ _T = {
     },
     'correction_prompt': {
         'english':  "✏️ *Fix entry {idx}:*\n_{desc} — ₹{amount} {emoji}_\n\nSend the correct info\n_(e.g. 'amount was 750' or 'this was Raju's credit')_",
-        'hindi':    "✏️ *Entry {idx} theek karo:*\n_{desc} — ₹{amount} {emoji}_\n\nSahi info bhejein\n_(e.g. 'amount 750 tha' ya 'yeh Raju ka udhaar tha')_",
+        'hindi':    "✏️ *एंट्री {idx} ठीक करें:*\n_{desc} — ₹{amount} {emoji}_\n\nसही जानकारी भेजें\n_(जैसे 'राशि 750 थी' या 'यह राजू का उधार था')_",
         'hinglish': "✏️ *Entry {idx} theek karo:*\n_{desc} — ₹{amount} {emoji}_\n\nSahi info bhejein\n_(e.g. 'amount 750 tha' ya 'yeh Raju ka udhaar tha')_",
         'gujarati': "✏️ *એન્ટ્રી {idx} સુધારો:*\n_{desc} — ₹{amount} {emoji}_\n\nસાચી માહિતી મોકલો\n_(દા.ત. 'રકમ 750 હતી' અથવા 'આ રાજુનું ઉધાર હતું')_",
         'marathi':  "✏️ *एंट्री {idx} दुरुस्त करा:*\n_{desc} — ₹{amount} {emoji}_\n\nबरोबर माहिती पाठवा\n_(उदा. 'रक्कम 750 होती' किंवा 'हे राजूचे उधार होते')_",
@@ -158,7 +158,7 @@ _T = {
     },
     'entry_not_found': {
         'english':  "Entry {idx} not found. Send a number between 1 and {total}.",
-        'hindi':    "Entry {idx} nahi mili. 1 se {total} ke beech number bhejein.",
+        'hindi':    "एंट्री {idx} नहीं मिली। 1 से {total} के बीच नंबर भेजें।",
         'hinglish': "Entry {idx} nahi mili. 1 se {total} ke beech number bhejein.",
         'gujarati': "એન્ટ્રી {idx} મળી નહીં. 1 થી {total} વચ્ચે નંબર મોકલો.",
         'marathi':  "एंट्री {idx} सापडली नाही. 1 ते {total} दरम्यान क्रमांक पाठवा.",
@@ -170,7 +170,7 @@ _T = {
     },
     'person_classify_done': {
         'english':  "All persons registered! 🎉\nReady for the next entry 📒",
-        'hindi':    "Sab log register ho gaye! 🎉\nAgle entry ke liye ready hoon 📒",
+        'hindi':    "सब लोग रजिस्टर हो गए! 🎉\nअगली एंट्री के लिए तैयार हूँ 📒",
         'hinglish': "Sab log register ho gaye! 🎉\nAgle entry ke liye ready hoon 📒",
         'gujarati': "બધા લોકો રજિસ્ટર થઈ ગયા! 🎉\nઆગળની એન્ટ્રી માટે તૈયાર છું 📒",
         'marathi':  "सर्व लोक नोंदणीकृत झाले! 🎉\nपुढच्या एंट्रीसाठी तयार आहे 📒",
@@ -184,7 +184,7 @@ _T = {
     # ── Errors ──────────────────────────────────────────────────
     'ai_busy': {
         'english':  "⚠️ AI is busy. Please try again in 1 minute.",
-        'hindi':    "⚠️ AI busy hai. 1 minute baad dobara try karein.",
+        'hindi':    "⚠️ AI व्यस्त है। 1 मिनट बाद दोबारा प्रयास करें।",
         'hinglish': "⚠️ AI busy hai. 1 minute baad dobara try karein.",
         'gujarati': "⚠️ AI વ્યસ્ત છે. 1 મિનિટ પછી ફરી પ્રયાસ કરો.",
         'marathi':  "⚠️ AI व्यस्त आहे. 1 मिनिटानंतर पुन्हा प्रयत्न करा.",
@@ -196,7 +196,7 @@ _T = {
     },
     'ai_busy_photo': {
         'english':  "⚠️ AI is busy. Please resend the photo in 2 minutes.",
-        'hindi':    "⚠️ AI busy hai. 2 minute baad photo dobara bhejein.",
+        'hindi':    "⚠️ AI व्यस्त है। 2 मिनट बाद फोटो दोबारा भेजें।",
         'hinglish': "⚠️ AI busy hai. 2 minute baad photo dobara bhejein.",
         'gujarati': "⚠️ AI વ્યસ્ત છે. 2 મિનિટ પછી ફોટો ફરી મોકલો.",
         'marathi':  "⚠️ AI व्यस्त आहे. 2 मिनिटांनी फोटो पुन्हा पाठवा.",
@@ -208,7 +208,7 @@ _T = {
     },
     'parse_fail': {
         'english':  "Couldn't understand 🙏\nExample: 'Sale 5000 cash' or 'Raju took 500 on credit'",
-        'hindi':    "Samajh nahi aaya 🙏\nExample: 'Sale 5000 cash' ya 'Raju ne 500 udhaar liya'",
+        'hindi':    "समझ नहीं आया 🙏\nउदाहरण: 'बिक्री 5000 नकद' या 'राजू ने 500 उधार लिया'",
         'hinglish': "Samajh nahi aaya 🙏\nExample: 'Sale 5000 cash' ya 'Raju ne 500 udhaar liya'",
         'gujarati': "સમજાયું નહીં 🙏\nઉદાહરણ: 'વેચાણ 5000 રોકડ' અથવા 'રાજુએ 500 ઉધાર લીધા'",
         'marathi':  "समजले नाही 🙏\nउदाहरण: 'विक्री 5000 रोख' किंवा 'राजूने 500 उधार घेतले'",
@@ -220,7 +220,7 @@ _T = {
     },
     'classify_cancel': {
         'english':  "❌ Classification cancelled. Send a new entry.",
-        'hindi':    "❌ Classification cancel ho gayi. Koi nayi entry bhejein.",
+        'hindi':    "❌ वर्गीकरण रद्द हो गया। कोई नई एंट्री भेजें।",
         'hinglish': "❌ Classification cancel ho gayi. Koi nayi entry bhejein.",
         'gujarati': "❌ વર્ગીકરણ રદ. નવી એન્ટ્રી મોકલો.",
         'marathi':  "❌ वर्गीकरण रद्द. नवीन एंट्री पाठवा.",

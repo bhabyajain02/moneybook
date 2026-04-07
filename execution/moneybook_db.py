@@ -1063,7 +1063,7 @@ def get_dues_with_detail(store_id: int) -> list:
         return result
 
 
-def _extract_name_from_desc(desc: str) -> str | None:
+def _extract_name_from_desc(desc: str) -> Optional[str]:
     """Extract a person name from a transaction description.
 
     Handles patterns like:

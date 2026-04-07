@@ -15,6 +15,8 @@ export default function App() {
   const [storeName, setStoreName] = useState(() => localStorage.getItem(LS_NAME) || '')
   const [language, setLanguage]   = useState(() => localStorage.getItem(LS_LANG) || 'hinglish')
   const [activePage, setActivePage] = useState('chat')
+  const [refreshKey, setRefreshKey] = useState(0)
+  const bumpRefresh = () => setRefreshKey(k => k + 1)
 
   function handleLogin(digits, storeData, lang) {
     const normalized = `web:+91${digits}`
@@ -36,6 +38,11 @@ export default function App() {
     setPhone(null)
     setStoreName('')
     setActivePage('chat')
+  }
+
+  function handleStoreNameChange(name) {
+    localStorage.setItem(LS_NAME, name)
+    setStoreName(name)
   }
 
   function handleLanguageChange(key) {
@@ -67,13 +74,14 @@ export default function App() {
               language={language}
               onLogout={handleLogout}
               onLanguageChange={handleLanguageChange}
+              onDataChange={bumpRefresh}
             />
           </div>
           <div style={{ display: activePage === 'analytics' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
-            <AnalyticsPage phone={phone} storeName={storeName} language={language} />
+            <AnalyticsPage phone={phone} storeName={storeName} language={language} refreshKey={refreshKey} />
           </div>
           <div style={{ display: activePage === 'dues' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
-            <DuesPage phone={phone} storeName={storeName} language={language} />
+            <DuesPage phone={phone} storeName={storeName} language={language} refreshKey={refreshKey} />
           </div>
           <div style={{ display: activePage === 'profile' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
             <ProfilePage
@@ -81,6 +89,7 @@ export default function App() {
               storeName={storeName}
               language={language}
               onLanguageChange={handleLanguageChange}
+              onStoreNameChange={handleStoreNameChange}
               onLogout={handleLogout}
             />
           </div>

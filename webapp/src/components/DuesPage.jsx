@@ -52,11 +52,11 @@ function getRange(period) {
   return { start: null, end: null };
 }
 
-const PERIOD_LABELS = [
-  { key: "month", label: "This Month" },
-  { key: "quarter", label: "Quarter" },
-  { key: "year", label: "Year" },
-  { key: "all", label: "All Time" },
+const PERIOD_KEYS = [
+  { key: "month", tKey: "period_month_dues" },
+  { key: "quarter", tKey: "period_quarter_dues" },
+  { key: "year", tKey: "period_year_dues" },
+  { key: "all", tKey: "period_all_dues" },
 ];
 
 // ── Avatar icon based on name ────────────────────────────────
@@ -245,7 +245,7 @@ function DuesCard({ due, phone, language, onContactSaved }) {
                   padding: "2px 7px",
                 }}
               >
-                Given {fmtRs(due.total_given)}
+                {t('given_label', language)} {fmtRs(due.total_given)}
               </span>
               {due.total_received > 0 && (
                 <span
@@ -258,7 +258,7 @@ function DuesCard({ due, phone, language, onContactSaved }) {
                     padding: "2px 7px",
                   }}
                 >
-                  Paid {fmtRs(due.total_received)}
+                  {t('paid_suffix', language)} {fmtRs(due.total_received)}
                 </span>
               )}
             </div>
@@ -269,7 +269,7 @@ function DuesCard({ due, phone, language, onContactSaved }) {
             {fmtRs(due.balance)}
           </div>
           <div style={{ fontSize: 10, color, fontWeight: 600, marginTop: 2 }}>
-            {days > 0 ? `${days}d overdue` : "Today"}
+            {days > 0 ? `${days}${t('overdue_days', language)}` : t('today_text', language)}
           </div>
           <div style={{ fontSize: 10, color: "#ccc", marginTop: 2 }}>
             {expanded ? "▲" : "▼"}
@@ -457,7 +457,7 @@ function DuesCard({ due, phone, language, onContactSaved }) {
 }
 
 // ── Received card ────────────────────────────────────────────
-function ReceivedCard({ rec }) {
+function ReceivedCard({ rec, language }) {
   const [expanded, setExpanded] = useState(false);
 
   // Extract clean name — person_name may still be a full sentence if migration hasn't run
@@ -522,8 +522,8 @@ function ReceivedCard({ rec }) {
             {displayName}
           </div>
           <div style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>
-            {rec.txn_count} payment{rec.txn_count !== 1 ? "s" : ""} received ·
-            Last: {fmtDate(rec.last_date)}
+            {rec.txn_count} {rec.txn_count !== 1 ? t('payments_received', language) : t('payment_received_single', language)} ·
+            {fmtDate(rec.last_date)}
           </div>
           {hasPending ? (
             <span
@@ -538,7 +538,7 @@ function ReceivedCard({ rec }) {
                 display: "inline-block",
               }}
             >
-              ⏳ Still pending {fmtRs(rec.net_pending)}
+              ⏳ {t('still_pending', language)} {fmtRs(rec.net_pending)}
             </span>
           ) : (
             <span
@@ -553,7 +553,7 @@ function ReceivedCard({ rec }) {
                 display: "inline-block",
               }}
             >
-              ✅ Fully cleared
+              ✅ {t('fully_cleared', language)}
             </span>
           )}
         </div>
@@ -586,7 +586,7 @@ function ReceivedCard({ rec }) {
             >
               <div>
                 <div style={{ fontSize: 12, color: "#888" }}>
-                  Dues given to {displayName}
+                  {t('dues_given_to', language)} {displayName}
                 </div>
                 <div style={{ fontSize: 11, color: "#bbb" }}>
                   {fmtDate(rec.dues_given_date)}
@@ -612,7 +612,7 @@ function ReceivedCard({ rec }) {
             >
               <div>
                 <div style={{ fontSize: 12, color: "#555" }}>
-                  Payment received
+                  {t('payment_received_label', language)}
                 </div>
                 <div style={{ fontSize: 11, color: "#bbb" }}>
                   {fmtDate(txn.date)}
@@ -672,8 +672,7 @@ function StaffCard({ member, language }) {
             {member.name}
           </div>
           <div style={{ fontSize: 11, color: "#aaa", marginTop: 2 }}>
-            {(member.recent_payments || []).length} transaction
-            {(member.recent_payments || []).length !== 1 ? "s" : ""} in period
+            {(member.recent_payments || []).length} {(member.recent_payments || []).length !== 1 ? t('transactions_in_period', language) : t('transaction_in_period', language)}
           </div>
         </div>
         <div style={{ textAlign: "right" }}>
@@ -688,7 +687,7 @@ function StaffCard({ member, language }) {
             {fmtRs(Math.abs(member.net_total))}
           </div>
           <div style={{ fontSize: 10, color: "#aaa", marginTop: 2 }}>
-            {isNeg ? "received" : "net paid"}
+            {isNeg ? t('received_more_staff', language) : t('net_paid_staff', language)}
           </div>
           <div style={{ fontSize: 10, color: "#ccc", marginTop: 2 }}>
             {expanded ? "▲" : "▼"}
@@ -717,7 +716,7 @@ function StaffCard({ member, language }) {
                 >
                   <div>
                     <div style={{ fontSize: 12, color: "#555" }}>
-                      {p.description || (isReceipt ? "Received" : "Payment")}
+                      {p.description || (isReceipt ? t('received_badge', language) : t('payments_label', language))}
                     </div>
                     <div style={{ fontSize: 11, color: "#bbb" }}>{p.date}</div>
                   </div>
@@ -746,7 +745,7 @@ function StaffCard({ member, language }) {
 }
 
 // ── Main DuesPage ────────────────────────────────────────────
-export default function DuesPage({ phone, storeName, language = "hinglish" }) {
+export default function DuesPage({ phone, storeName, language = "hinglish", refreshKey }) {
   const [tab, setTab] = useState("dues");
   const [period, setPeriod] = useState("all");
   const [dues, setDues] = useState([]);
@@ -779,7 +778,7 @@ export default function DuesPage({ phone, storeName, language = "hinglish" }) {
       }
     }
     load();
-  }, [phone, tab, period]);
+  }, [phone, tab, period, refreshKey]);
 
   async function handleContactSaved(personName, contactPhone) {
     await updateDuesContact(phone, personName, contactPhone);
@@ -888,8 +887,8 @@ export default function DuesPage({ phone, storeName, language = "hinglish" }) {
           }}
         >
           {[
-            { key: "dues", label: "Udhaar / Dues" },
-            { key: "staff", label: "Staff" },
+            { key: "dues", tKey: "tab_dues_label" },
+            { key: "staff", tKey: "tab_staff_label" },
           ].map((tb) => (
             <button
               key={tb.key}
@@ -907,7 +906,7 @@ export default function DuesPage({ phone, storeName, language = "hinglish" }) {
                 transition: "all 0.15s",
               }}
             >
-              {tb.label}
+              {t(tb.tKey, language)}
             </button>
           ))}
         </div>
@@ -925,7 +924,7 @@ export default function DuesPage({ phone, storeName, language = "hinglish" }) {
           flexShrink: 0,
         }}
       >
-        {PERIOD_LABELS.map((p) => (
+        {PERIOD_KEYS.map((p) => (
           <button
             key={p.key}
             onClick={() => setPeriod(p.key)}
@@ -941,7 +940,7 @@ export default function DuesPage({ phone, storeName, language = "hinglish" }) {
               whiteSpace: "nowrap",
             }}
           >
-            {p.label}
+            {t(p.tKey, language)}
           </button>
         ))}
       </div>
@@ -981,7 +980,7 @@ export default function DuesPage({ phone, storeName, language = "hinglish" }) {
                   marginBottom: 6,
                 }}
               >
-                TOTAL OUTSTANDING
+                {t('total_outstanding_label', language)}
               </div>
               <div
                 style={{
@@ -1013,8 +1012,7 @@ export default function DuesPage({ phone, storeName, language = "hinglish" }) {
                       fontWeight: 600,
                     }}
                   >
-                    {dues.length} {dues.length === 1 ? "person" : "people"}{" "}
-                    pending
+                    {dues.length} {dues.length === 1 ? t('person_pending', language) : t('people_pending', language)}
                   </span>
                 </div>
               )}
@@ -1061,7 +1059,7 @@ export default function DuesPage({ phone, storeName, language = "hinglish" }) {
                     letterSpacing: 1,
                   }}
                 >
-                  PENDING
+                  {t('pending_label', language)}
                 </div>
                 <div
                   style={{
@@ -1114,7 +1112,7 @@ export default function DuesPage({ phone, storeName, language = "hinglish" }) {
                     letterSpacing: 1,
                   }}
                 >
-                  RECEIVED
+                  {t('received_label_upper', language)}
                 </div>
                 <div
                   style={{
@@ -1144,11 +1142,10 @@ export default function DuesPage({ phone, storeName, language = "hinglish" }) {
                     <div
                       style={{ fontWeight: 800, fontSize: 16, color: "#111" }}
                     >
-                      Pending Dues
+                      {t('pending_dues', language)}
                     </div>
                     <div style={{ fontSize: 12, color: "#999", marginTop: 1 }}>
-                      {totalTxnsPending} transaction
-                      {totalTxnsPending !== 1 ? "s" : ""} pending
+                      {totalTxnsPending} {t('transactions_pending', language)}
                     </div>
                   </div>
                   {dues.length > PREVIEW && (
@@ -1163,7 +1160,7 @@ export default function DuesPage({ phone, storeName, language = "hinglish" }) {
                         cursor: "pointer",
                       }}
                     >
-                      {showAllPending ? "SHOW LESS" : "VIEW ALL"}
+                      {showAllPending ? t('show_less', language) : t('view_all', language)}
                     </button>
                   )}
                 </div>
@@ -1198,12 +1195,12 @@ export default function DuesPage({ phone, storeName, language = "hinglish" }) {
                         color: "#2E7D32",
                       }}
                     >
-                      Recently Received
+                      {t('recently_received', language)}
                     </div>
                     <div style={{ fontSize: 12, color: "#999", marginTop: 1 }}>
                       {period === "all"
-                        ? "All time"
-                        : PERIOD_LABELS.find((p) => p.key === period)?.label}
+                        ? t('all_time', language)
+                        : t(PERIOD_KEYS.find((p) => p.key === period)?.tKey || 'all_time', language)}
                     </div>
                   </div>
                   {duesReceived.length > PREVIEW && (
@@ -1218,12 +1215,12 @@ export default function DuesPage({ phone, storeName, language = "hinglish" }) {
                         cursor: "pointer",
                       }}
                     >
-                      {showAllReceived ? "SHOW LESS" : "VIEW ALL"}
+                      {showAllReceived ? t('show_less', language) : t('view_all', language)}
                     </button>
                   )}
                 </div>
                 {visibleReceived.map((r) => (
-                  <ReceivedCard key={r.person_name} rec={r} />
+                  <ReceivedCard key={r.person_name} rec={r} language={language} />
                 ))}
               </div>
             )}
@@ -1237,9 +1234,9 @@ export default function DuesPage({ phone, storeName, language = "hinglish" }) {
                 }}
               >
                 <div style={{ fontSize: 40, marginBottom: 12 }}>🎉</div>
-                <div style={{ fontWeight: 700, fontSize: 15 }}>No dues!</div>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>{t('no_dues_msg', language)}</div>
                 <div style={{ fontSize: 13, marginTop: 4 }}>
-                  All clear — no pending udhaar
+                  {t('no_dues_sub', language)}
                 </div>
               </div>
             )}
@@ -1268,7 +1265,7 @@ export default function DuesPage({ phone, storeName, language = "hinglish" }) {
                     letterSpacing: 1,
                   }}
                 >
-                  PAID OUT
+                  {t('paid_out_label', language)}
                 </div>
                 <div
                   style={{
@@ -1298,7 +1295,7 @@ export default function DuesPage({ phone, storeName, language = "hinglish" }) {
                     letterSpacing: 1,
                   }}
                 >
-                  NET
+                  {t('net_staff_label', language)}
                 </div>
                 <div
                   style={{
@@ -1323,7 +1320,7 @@ export default function DuesPage({ phone, storeName, language = "hinglish" }) {
               >
                 <div style={{ fontSize: 40, marginBottom: 12 }}>👷</div>
                 <div style={{ fontWeight: 700, fontSize: 15 }}>
-                  No staff records
+                  {t('no_staff_records', language)}
                 </div>
               </div>
             ) : (
@@ -1336,7 +1333,7 @@ export default function DuesPage({ phone, storeName, language = "hinglish" }) {
                     marginBottom: 10,
                   }}
                 >
-                  Staff Members
+                  {t('staff_members', language)}
                 </div>
                 {staff.map((s) => (
                   <StaffCard key={s.name} member={s} language={language} />

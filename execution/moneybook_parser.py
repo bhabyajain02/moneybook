@@ -162,6 +162,13 @@ Instead, classify based on context:
   - If truly ambiguous → use "other" type and set needs_tracking=true so the user can classify
   - NEVER invent "Dues given to X" in the description unless the original text actually says dues/udhaar/advance
 
+━━ ADJUSTMENTS, RETURNS, REFUNDS ━━
+Adjustments, returns, refunds, manual corrections are NOT expenses — they are type "other":
+  - "Manual Adjust", "Manual Adjustment" → type: other (NOT expense)
+  - "Chunni Return", "Goods Return", "Saman Wapsi" → type: other (NOT expense)
+  - "Refund", "Credit Note", "Correction" → type: other (NOT expense)
+Only actual spending (purchases, bills, payments for services) should be type "expense".
+
 ━━ TAG ━━
 For expense entries write a short lowercase English label using your own world knowledge.
 {existing_tags_hint}
@@ -293,6 +300,13 @@ Instead, classify based on context:
   - If it looks like payment for a service → expense (e.g. "Ali Tailor 500" = tailoring expense)
   - If truly ambiguous → use "other" type and set needs_tracking=true so the user can classify
   - NEVER invent "Dues given to X" in the description unless the original text actually says dues/udhaar/advance
+
+━━ ADJUSTMENTS, RETURNS, REFUNDS ━━
+Adjustments, returns, refunds, manual corrections are NOT expenses — they are type "other":
+  - "Manual Adjust", "Manual Adjustment" → type: other (NOT expense)
+  - "Chunni Return", "Goods Return", "Saman Wapsi" → type: other (NOT expense)
+  - "Refund", "Credit Note", "Correction" → type: other (NOT expense)
+Only actual spending (purchases, bills, payments for services) should be type "expense".
 
 ━━ TAG — BE SPECIFIC, USE YOUR OWN WORDS ━━
 Write a short lowercase English label describing the nature of the expense.

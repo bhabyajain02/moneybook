@@ -75,7 +75,7 @@ function groupByDate(messages) {
   return groups
 }
 
-export default function ChatWindow({ phone, storeName, language = 'hinglish', onLogout, onLanguageChange }) {
+export default function ChatWindow({ phone, storeName, language = 'hinglish', onLogout, onLanguageChange, onDataChange }) {
   const [messages, setMessages]           = useState([])
   const [processing, setProcessing]       = useState(false)
   const [quickReplies, setQuickReplies]   = useState([])
@@ -295,6 +295,7 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
       })
       delete originalTxnsRef.current[botMsgId]
       setQuickReplies([])
+      if (onDataChange) onDataChange()
     } catch (e) {
       setMessages(prev => [...prev, {
         id: Date.now(), direction: 'bot',
@@ -331,6 +332,7 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
           body: `✅ ${txns.length} entries saved from ledger.`,
           created_at: new Date().toISOString(),
         }])
+        if (onDataChange) onDataChange()
       } catch (e) {
         setMessages(prev => [...prev, {
           id: Date.now(), direction: 'bot',
@@ -361,6 +363,7 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
       })
       delete originalTxnsRef.current[msgId]
       setPhotoReview(null)
+      if (onDataChange) onDataChange()
       if (resp.classification_pending) await poll()
     } catch (e) {
       setMessages(prev => [...prev, {

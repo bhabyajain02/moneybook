@@ -930,6 +930,15 @@ async def api_send_image(
     store = get_or_create_store(phone)
     sid   = store['id']
 
+    # Auto-complete onboarding if user uploads photo before finishing
+    if store.get('onboarding_state') in ('new', 'awaiting_name', 'awaiting_segment'):
+        updates = {'onboarding_state': 'active'}
+        if not store.get('name'):
+            updates['name'] = 'My Store'
+        if not store.get('segment'):
+            updates['segment'] = 'general'
+        update_store(sid, **updates)
+
     # Save file to .tmp/uploads/
     uploads_dir = Path(__file__).parent.parent / '.tmp' / 'uploads'
     uploads_dir.mkdir(parents=True, exist_ok=True)

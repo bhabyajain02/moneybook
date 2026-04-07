@@ -88,12 +88,9 @@ export default function PersonClassifyWidget({ persons, staffOptions: initialSta
             const isNew = classifications[p.name]?.isNewStaff
             return (
               <div className="classify-person-card" key={p.name}>
-                <div className="classify-person-name">{p.name}</div>
-                {p.description && (
-                  <div className="classify-person-context">
-                    {p.description}{p.amount ? ` — ₹${Number(p.amount).toLocaleString('en-IN')}` : ''}
-                  </div>
-                )}
+                <div className="classify-person-name">
+                  {p.description || p.name}{p.amount ? ` — ₹${Number(p.amount).toLocaleString('en-IN')}` : ''}
+                </div>
                 <div className="classify-btn-row">
                   {CATEGORY_KEYS.map(c => (
                     <button

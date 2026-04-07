@@ -297,6 +297,7 @@ export default function ProfilePage({
   storeName,
   language,
   onLanguageChange,
+  onStoreNameChange,
   onLogout,
 }) {
   const [profile, setProfile] = useState(null);
@@ -318,6 +319,7 @@ export default function ProfilePage({
     await updateProfile(phone, { name, language: lang });
     setProfile((p) => ({ ...p, name, language: lang }));
     if (lang !== profile?.language && onLanguageChange) onLanguageChange(lang);
+    if (name !== storeName && onStoreNameChange) onStoreNameChange(name);
     setEditing(false);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);

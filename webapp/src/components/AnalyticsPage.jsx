@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { fetchAnalytics } from "../api.js";
-import { t } from "../translations.js";
+import { t, tagLabel } from "../translations.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -254,6 +254,7 @@ export default function AnalyticsPage({
   phone,
   storeName,
   language = "hinglish",
+  refreshKey,
 }) {
   const [period, setPeriod] = useState("day");
   const [customRange, setCustomRange] = useState(null); // { start, end } when custom
@@ -271,7 +272,7 @@ export default function AnalyticsPage({
       .then(setData)
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [phone, period, customRange]);
+  }, [phone, period, customRange, refreshKey]);
 
   function handlePeriodClick(key) {
     setPeriod(key);
@@ -595,7 +596,7 @@ export default function AnalyticsPage({
                           marginBottom: 2,
                         }}
                       >
-                        {toLabel(tag, {}).toUpperCase()}
+                        {tagLabel(tag, language).toUpperCase()}
                       </div>
                       <div
                         style={{
@@ -682,7 +683,7 @@ export default function AnalyticsPage({
                         marginBottom: 2,
                       }}
                     >
-                      {toLabel(tag, {}).toUpperCase()}
+                      {tagLabel(tag, language).toUpperCase()}
                     </div>
                     <div
                       style={{
@@ -769,7 +770,7 @@ export default function AnalyticsPage({
                     }}
                   />
                   <span style={{ fontSize: 12, color: "#555", flex: 1 }}>
-                    {toLabel(tag, {}).toUpperCase()}
+                    {tagLabel(tag, language).toUpperCase()}
                   </span>
                   <span
                     style={{ fontSize: 12, color: "#888", fontWeight: 700 }}
