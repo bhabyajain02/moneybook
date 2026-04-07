@@ -131,7 +131,12 @@
       "Bash(npx -y esbuild src/components/AnalyticsPage.jsx --jsx=automatic --bundle=false --format=esm --outfile=/dev/null)",
       "Bash(npx -y esbuild src/components/PersonClassifyWidget.jsx --jsx=automatic --bundle=false --format=esm --outfile=/dev/null)",
       "Bash(npx -y esbuild src/components/DuesPage.jsx --jsx=automatic --bundle=false --format=esm --outfile=/dev/null)",
-      "Bash(sqlite3 /Users/bhabya.jain/go/.tmp/moneybook.db \"SELECT name, language FROM stores\")"
+      "Bash(sqlite3 /Users/bhabya.jain/go/.tmp/moneybook.db \"SELECT name, language FROM stores\")",
+      "Bash(git pull:*)",
+      "Bash(npx --yes acorn --ecma2020 --module src/App.jsx)",
+      "Bash(node -e \":*)",
+      "Bash(sqlite3 /Users/bhabya.jain/go/.tmp/moneybook.db \"SELECT id, name, language FROM stores\")",
+      "Bash(sqlite3 /Users/bhabya.jain/go/.tmp/moneybook.db \"SELECT id, phone, name, language FROM stores\")"
     ]
   },
   "hooks": {
