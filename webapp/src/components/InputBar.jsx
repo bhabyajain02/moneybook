@@ -1,5 +1,15 @@
 import { useRef, useState } from 'react'
 import { t } from '../translations.js'
+import { Capacitor } from '@capacitor/core'
+
+function dataUrlToBlob(dataUrl) {
+  const [header, b64] = dataUrl.split(',')
+  const mime = header.match(/:(.*?);/)[1]
+  const bytes = atob(b64)
+  const arr = new Uint8Array(bytes.length)
+  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i)
+  return new Blob([arr], { type: mime })
+}
 
 export default function InputBar({ onSend, onImage, onLedger, disabled, language }) {
   const [text, setText] = useState('')
@@ -26,6 +36,26 @@ export default function InputBar({ onSend, onImage, onLedger, disabled, language
     const file = e.target.files?.[0]
     if (file) onImage(file)
     e.target.value = ''   // reset so same file can be re-sent
+  }
+
+  async function handleImagePick() {
+    if (Capacitor.isNativePlatform()) {
+      try {
+        const { Camera, CameraResultType, CameraSource } = await import('@capacitor/camera')
+        const photo = await Camera.getPhoto({
+          quality: 85,
+          resultType: CameraResultType.DataUrl,
+          source: CameraSource.Prompt,
+          width: 1500,
+        })
+        const blob = dataUrlToBlob(photo.dataUrl)
+        onImage(new File([blob], 'photo.jpg', { type: 'image/jpeg' }))
+      } catch (e) {
+        if (e.message !== 'User cancelled photos app') console.error('Camera error:', e)
+      }
+    } else {
+      fileRef.current?.click()
+    }
   }
 
   // Auto-grow textarea
@@ -68,7 +98,7 @@ export default function InputBar({ onSend, onImage, onLedger, disabled, language
       {/* Camera / attach button */}
       <button
         className="icon-btn"
-        onClick={() => fileRef.current?.click()}
+        onClick={handleImagePick}
         disabled={disabled}
         aria-label="Attach image"
       >

@@ -1,31 +1,67 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { Capacitor } from '@capacitor/core'
 import LoginScreen from './components/LoginScreen.jsx'
 import ChatWindow from './components/ChatWindow.jsx'
 import AnalyticsPage from './components/AnalyticsPage.jsx'
 import DuesPage from './components/DuesPage.jsx'
 import ProfilePage from './components/ProfilePage.jsx'
+import OperatorDashboard from './components/OperatorDashboard.jsx'
 import { updateProfile } from './api.js'
+import { getItem, setItem, removeItem, getItemSync } from './storage.js'
 
 const LS_KEY  = 'moneybook_phone'
 const LS_NAME = 'moneybook_store_name'
 const LS_LANG = 'moneybook_lang'
 
 export default function App() {
-  const [phone, setPhone]         = useState(() => localStorage.getItem(LS_KEY) || null)
-  const [storeName, setStoreName] = useState(() => localStorage.getItem(LS_NAME) || '')
-  const [language, setLanguage]   = useState(() => localStorage.getItem(LS_LANG) || 'hinglish')
+  const [isAdmin] = useState(() => window.location.hash === '#admin')
+  const [phone, setPhone]         = useState(() => getItemSync(LS_KEY) || null)
+  const [storeName, setStoreName] = useState(() => getItemSync(LS_NAME) || '')
+  const [language, setLanguage]   = useState(() => getItemSync(LS_LANG) || 'hinglish')
   const [activePage, setActivePage] = useState('chat')
   const [refreshKey, setRefreshKey] = useState(0)
   const bumpRefresh = () => setRefreshKey(k => k + 1)
 
+  // On native, hydrate from async Capacitor Preferences
+  useEffect(() => {
+    if (Capacitor.isNativePlatform()) {
+      Promise.all([getItem(LS_KEY), getItem(LS_NAME), getItem(LS_LANG)]).then(([p, n, l]) => {
+        if (p) setPhone(p)
+        if (n) setStoreName(n)
+        if (l) setLanguage(l)
+      })
+    }
+  }, [])
+
+  // Back button handler for Android
+  useEffect(() => {
+    if (Capacitor.isNativePlatform()) {
+      import('@capacitor/app').then(({ App: CapApp }) => {
+        CapApp.addListener('backButton', () => {
+          if (activePage !== 'chat') setActivePage('chat')
+          else CapApp.exitApp()
+        })
+      })
+    }
+  }, [activePage])
+
+  // StatusBar color on native
+  useEffect(() => {
+    if (Capacitor.isNativePlatform()) {
+      import('@capacitor/status-bar').then(({ StatusBar, Style }) => {
+        StatusBar.setBackgroundColor({ color: '#075E54' }).catch(() => {})
+        StatusBar.setStyle({ style: Style.Dark }).catch(() => {})
+      }).catch(() => {})
+    }
+  }, [])
+
   function handleLogin(digits, storeData, lang) {
     const normalized = `web:+91${digits}`
-    localStorage.setItem(LS_KEY, normalized)
-    localStorage.setItem(LS_NAME, storeData.name || '')
+    setItem(LS_KEY, normalized)
+    setItem(LS_NAME, storeData.name || '')
     if (lang) {
-      localStorage.setItem(LS_LANG, lang)
+      setItem(LS_LANG, lang)
       setLanguage(lang)
-      // Persist selected language to the backend store record
       updateProfile(normalized, { language: lang }).catch(() => {})
     }
     setPhone(normalized)
@@ -33,23 +69,26 @@ export default function App() {
   }
 
   function handleLogout() {
-    localStorage.removeItem(LS_KEY)
-    localStorage.removeItem(LS_NAME)
+    removeItem(LS_KEY)
+    removeItem(LS_NAME)
     setPhone(null)
     setStoreName('')
     setActivePage('chat')
   }
 
   function handleStoreNameChange(name) {
-    localStorage.setItem(LS_NAME, name)
+    setItem(LS_NAME, name)
     setStoreName(name)
   }
 
   function handleLanguageChange(key) {
-    localStorage.setItem(LS_LANG, key)
+    setItem(LS_LANG, key)
     setLanguage(key)
-    // Also persist to backend
     if (phone) updateProfile(phone, { language: key }).catch(() => {})
+  }
+
+  if (isAdmin) {
+    return <OperatorDashboard />
   }
 
   if (!phone) {

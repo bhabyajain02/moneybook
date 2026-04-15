@@ -31,6 +31,28 @@ from datetime import date
 from dotenv import load_dotenv
 from pathlib import Path
 
+
+def check_image_quality(filepath: str) -> tuple:
+    """Quick quality check on an image. Returns (ok: bool, reason: str)."""
+    try:
+        import cv2
+        img = cv2.imread(filepath, cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            return False, 'unreadable'
+        h, w = img.shape
+        if h < 300 or w < 300:
+            return False, 'too_small'
+        lap_var = cv2.Laplacian(img, cv2.CV_64F).var()
+        if lap_var < 50:
+            return False, 'blurry'
+        if img.mean() < 40:
+            return False, 'too_dark'
+        return True, 'ok'
+    except ImportError:
+        return True, 'ok'  # cv2 not installed, skip check
+    except Exception:
+        return True, 'ok'  # don't block on quality check errors
+
 # Load .env from project root (parent of execution/)
 _ENV_PATH = Path(__file__).resolve().parent.parent / '.env'
 load_dotenv(dotenv_path=_ENV_PATH, override=True)
@@ -168,6 +190,9 @@ Adjustments, returns, refunds, manual corrections are NOT expenses — they are 
   - "Chunni Return", "Goods Return", "Saman Wapsi" → type: other (NOT expense)
   - "Refund", "Credit Note", "Correction" → type: other (NOT expense)
 Only actual spending (purchases, bills, payments for services) should be type "expense".
+
+━━ STORE VOCABULARY ━━
+{store_vocabulary_hint}
 
 ━━ TAG ━━
 For expense entries write a short lowercase English label using your own world knowledge.
@@ -621,6 +646,43 @@ def _build_tags_hint(existing_tags: list = None) -> str:
     )
 
 
+def _build_vocabulary_hint(store_vocabulary: dict = None) -> str:
+    """Build a prompt hint for store-specific abbreviations, vocabulary, and type corrections.
+    Vocabulary dict may contain:
+    - Regular abbreviations: {"CD": "Cash Discount"}
+    - Type corrections: {"type:opening balance": "opening_balance"}
+    """
+    if not store_vocabulary:
+        return '(No store-specific vocabulary yet)'
+
+    abbrev_items = []
+    type_items = []
+    for key, val in store_vocabulary.items():
+        if key.startswith('type:'):
+            desc = key[5:]  # strip "type:" prefix
+            type_items.append(f'"{desc}" → type: {val}')
+        else:
+            abbrev_items.append(f'{key} = {val}')
+
+    parts = []
+    if abbrev_items:
+        parts.append(
+            f"This store uses these abbreviations/terms: {', '.join(abbrev_items[:20])}\n"
+            "When you see these abbreviations in the image, use the expanded form."
+        )
+    if type_items:
+        parts.append(
+            "CRITICAL — This store has CORRECTED these type classifications before. "
+            "You MUST follow these mappings:\n" +
+            '\n'.join(f'  • {item}' for item in type_items[:20]) +
+            "\nDo NOT repeat previous type errors. These corrections come from the store owner."
+        )
+
+    if not parts:
+        return '(No store-specific vocabulary yet)'
+    return '\n'.join(parts)
+
+
 def parse_text_message(message: str, store_context: str = '', language: str = 'hinglish',
                        existing_tags: list = None) -> dict:
     """Parse a free-form WhatsApp text message into transactions."""
@@ -683,7 +745,8 @@ def parse_image_message(image_url: str = None,
                         local_path: str = None,
                         local_mime: str = None,
                         language: str = 'hinglish',
-                        existing_tags: list = None) -> dict:
+                        existing_tags: list = None,
+                        store_vocabulary: dict = None) -> dict:
     """
     Single-pass image parsing with Extended Thinking.
 
@@ -716,12 +779,14 @@ def parse_image_message(image_url: str = None,
 
     try:
         tags_hint = _build_tags_hint(existing_tags)
+        vocab_hint = _build_vocabulary_hint(store_vocabulary)
         lang_instruction = _build_language_instruction(language)
         prompt = lang_instruction + '\n' + _IMAGE_PARSE_PROMPT.format(
             today=date.today().isoformat(),
             store_context=store_context if store_context else
                          '(No prior corrections for this store yet)',
             existing_tags_hint=tags_hint,
+            store_vocabulary_hint=vocab_hint,
         )
         result_text = _call_llm(
             _VISION_MODEL, prompt,

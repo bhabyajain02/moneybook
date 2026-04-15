@@ -2,6 +2,8 @@ import { useState, useEffect } from "react";
 import {
   fetchDues,
   fetchStaff,
+  fetchSuppliers,
+  fetchOthersGrouped,
   updateDuesContact,
   fetchPersonDuesHistory,
 } from "../api.js";
@@ -700,7 +702,7 @@ function StaffCard({ member, language }) {
         >
           {member.recent_payments?.length > 0 ? (
             member.recent_payments.map((p, i) => {
-              const isReceipt = p.type === "receipt";
+              const isReceipt = p.type === "receipt" || p.type === "staff_received";
               return (
                 <div
                   key={i}
@@ -744,6 +746,56 @@ function StaffCard({ member, language }) {
   );
 }
 
+function SupplierCard({ supplier }) {
+  const [expanded, setExpanded] = useState(false);
+  const netColor = supplier.net >= 0 ? '#D32F2F' : '#2E7D32';
+  const netLabel = supplier.net >= 0 ? 'we owe' : 'they owe';
+  return (
+    <div style={{ background: '#fff', borderRadius: 14, marginBottom: 10, boxShadow: '0 2px 8px rgba(0,0,0,0.07)', overflow: 'hidden' }}>
+      <div onClick={() => setExpanded(!expanded)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 14px', cursor: 'pointer' }}>
+        <div style={{ width: 44, height: 44, borderRadius: 22, background: '#E8EAF6', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <span style={{ fontSize: 22 }}>📦</span>
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 15, color: '#111' }}>{supplier.person_name}</div>
+          <div style={{ fontSize: 11, color: '#aaa', marginTop: 2 }}>{supplier.transaction_count} transactions · Last: {fmtDate(supplier.last_date)}</div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontWeight: 800, fontSize: 16, color: netColor }}>{fmtRs(Math.abs(supplier.net))}</div>
+          <div style={{ fontSize: 10, color: '#aaa', marginTop: 2 }}>{netLabel}</div>
+          <div style={{ fontSize: 10, color: '#ccc', marginTop: 2 }}>{expanded ? '▲' : '▼'}</div>
+        </div>
+      </div>
+      {expanded && (
+        <div style={{ borderTop: '1px solid #f5f5f5', padding: '8px 14px 10px' }}>
+          <div style={{ display: 'flex', gap: 16, marginBottom: 8, fontSize: 12, color: '#666' }}>
+            <span>Paid: {fmtRs(supplier.total_paid)}</span>
+            <span>Received: {fmtRs(supplier.total_received)}</span>
+          </div>
+          {(supplier.recent_transactions || []).length > 0 ? (
+            supplier.recent_transactions.map((txn, i) => {
+              const isPaid = ['expense', 'dues_given', 'supplier_payment'].includes(txn.type);
+              return (
+                <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 0', borderBottom: i < supplier.recent_transactions.length - 1 ? '1px solid #f5f5f5' : 'none' }}>
+                  <div>
+                    <div style={{ fontSize: 12, color: '#555' }}>{txn.description || (isPaid ? 'Payment' : 'Receipt')}</div>
+                    <div style={{ fontSize: 11, color: '#bbb' }}>{fmtDate(txn.date)}</div>
+                  </div>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: isPaid ? '#D32F2F' : '#2E7D32' }}>
+                    {isPaid ? '−' : '+'}{fmtRs(txn.amount)}
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div style={{ fontSize: 12, color: '#aaa' }}>No recent transactions</div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main DuesPage ────────────────────────────────────────────
 export default function DuesPage({ phone, storeName, language = "hinglish", refreshKey }) {
   const [tab, setTab] = useState("dues");
@@ -751,6 +803,9 @@ export default function DuesPage({ phone, storeName, language = "hinglish", refr
   const [dues, setDues] = useState([]);
   const [duesReceived, setDuesReceived] = useState([]);
   const [staff, setStaff] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
+  const [othersGroups, setOthersGroups] = useState([]);
+  const [expandedOtherGroups, setExpandedOtherGroups] = useState({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showAllPending, setShowAllPending] = useState(false);
@@ -761,15 +816,18 @@ export default function DuesPage({ phone, storeName, language = "hinglish", refr
       setLoading(true);
       setError(null);
       try {
+        const { start, end } = getRange(period);
         if (tab === "dues") {
-          const { start, end } = getRange(period);
           const res = await fetchDues(phone, start, end);
           setDues(res.dues || []);
           setDuesReceived(res.dues_received || []);
-        } else {
-          const { start, end } = getRange(period);
+        } else if (tab === "staff") {
           const res = await fetchStaff(phone, start, end);
           setStaff(res.staff || []);
+        } else if (tab === "suppliers") {
+          fetchSuppliers(phone, start, end).then(d => setSuppliers(d.suppliers || []));
+        } else if (tab === "others") {
+          fetchOthersGrouped(phone, start, end).then(d => setOthersGroups(d.groups || []));
         }
       } catch (e) {
         setError(e.message);
@@ -889,6 +947,8 @@ export default function DuesPage({ phone, storeName, language = "hinglish", refr
           {[
             { key: "dues", tKey: "tab_dues_label" },
             { key: "staff", tKey: "tab_staff_label" },
+            { key: "suppliers", tKey: "tab_suppliers_label" },
+            { key: "others", tKey: "tab_others_label" },
           ].map((tb) => (
             <button
               key={tb.key}
@@ -1341,6 +1401,82 @@ export default function DuesPage({ phone, storeName, language = "hinglish", refr
               </>
             )}
           </>
+        )}
+
+        {!loading && !error && tab === "suppliers" && (
+          <>
+            {/* Summary banner */}
+            <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
+              <div style={{ flex: 1, background: '#fff', borderRadius: 14, padding: '14px 16px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
+                <div style={{ fontSize: 10, color: '#D32F2F', fontWeight: 700, letterSpacing: 1 }}>WE OWE</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: '#D32F2F', marginTop: 2 }}>
+                  {fmtRs(suppliers.filter(s => s.net > 0).reduce((a, s) => a + s.net, 0))}
+                </div>
+              </div>
+              <div style={{ flex: 1, background: '#fff', borderRadius: 14, padding: '14px 16px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)' }}>
+                <div style={{ fontSize: 10, color: '#2E7D32', fontWeight: 700, letterSpacing: 1 }}>THEY OWE</div>
+                <div style={{ fontSize: 20, fontWeight: 800, color: '#2E7D32', marginTop: 2 }}>
+                  {fmtRs(suppliers.filter(s => s.net < 0).reduce((a, s) => a + Math.abs(s.net), 0))}
+                </div>
+              </div>
+            </div>
+
+            {suppliers.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px 20px', color: '#aaa' }}>
+                <div style={{ fontSize: 40, marginBottom: 12 }}>📦</div>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>No supplier/party records this period</div>
+              </div>
+            ) : (
+              suppliers.map((s, i) => (
+                <SupplierCard key={s.person_name || i} supplier={s} phone={phone} language={language} />
+              ))
+            )}
+          </>
+        )}
+
+        {!loading && !error && tab === "others" && (
+          <div style={{ padding: "0 16px 16px" }}>
+            {othersGroups.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 40, color: '#888' }}>
+                No other transactions this period
+              </div>
+            ) : (
+              othersGroups.map((group) => {
+                const key = (group.description || 'Other').toLowerCase();
+                const expanded = expandedOtherGroups[key];
+                return (
+                  <div key={key} style={{
+                    background: '#fff', borderRadius: 12, padding: '12px 14px',
+                    marginBottom: 8, boxShadow: '0 1px 4px rgba(0,0,0,0.07)',
+                    cursor: 'pointer',
+                  }} onClick={() => setExpandedOtherGroups(prev => ({ ...prev, [key]: !prev[key] }))}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 14 }}>{group.description}</div>
+                        <div style={{ fontSize: 11, color: '#888' }}>{group.count} {group.count === 1 ? 'entry' : 'entries'}</div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ fontWeight: 700, fontSize: 16, color: '#333' }}>{fmtRs(group.total_amount)}</div>
+                        <span style={{ fontSize: 12, color: '#999' }}>{expanded ? '▼' : '▶'}</span>
+                      </div>
+                    </div>
+                    {expanded && (
+                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #eee' }}>
+                        {(group.entries || []).map((e, i) => (
+                          <div key={e.id || i} style={{
+                            display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13,
+                          }}>
+                            <span style={{ color: '#666' }}>{fmtDate(e.date)}</span>
+                            <span style={{ fontWeight: 600 }}>{fmtRs(e.amount)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
         )}
       </div>
     </div>

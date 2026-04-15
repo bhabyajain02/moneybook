@@ -21,7 +21,7 @@ import logging
 from datetime import date, timedelta
 from typing import Optional
 
-from fastapi import FastAPI, Form, BackgroundTasks, UploadFile, File, HTTPException
+from fastapi import FastAPI, Form, BackgroundTasks, UploadFile, File, HTTPException, Request, Body
 from fastapi.responses import PlainTextResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -50,18 +50,25 @@ from moneybook_db import (
     save_web_message, get_web_messages, clear_store_data,
     get_daily_trend, get_staff_payments, get_payment_mode_split,
     get_top_receivers, get_others_summary, get_dues_with_detail, get_dues_received, get_staff_detail,
+    get_supplier_detail, get_others_detail, get_others_grouped,
     get_store_expense_tags,
     update_udhaar_contact,
     update_message_metadata, delete_transaction,
     get_person_udhaar_history,
+    add_to_operator_queue, get_operator_queue, update_queue_status,
+    save_shadow_parse, get_shadow_parse_for_queue, complete_queue_item,
+    get_store_ai_config, update_store_ai_config,
+    verify_operator, get_operator_by_id, list_operators,
+    get_descriptions_by_type, get_tags_by_type,
 )
 from moneybook_parser import (
     parse_text_message, parse_image_message, parse_correction,
     classify_correction_scope, is_trackable_person,
     format_pending_confirmation, format_person_question,
     format_daily_summary, format_period_summary, format_udhaar_list,
-    TAG_META,
+    TAG_META, check_image_quality,
 )
+from moneybook_eval import compute_accuracy, update_store_learning
 from execution.translations import t as bt
 
 TWILIO_ACCOUNT_SID     = os.getenv('TWILIO_ACCOUNT_SID')
@@ -926,7 +933,7 @@ async def api_send_image(
     file: UploadFile = File(...),
     language: str = Form(default='hinglish'),
 ):
-    """Upload a notebook image. Saves it, starts background processing."""
+    """Upload a notebook image. Saves to disk, adds to operator queue, triggers shadow parse."""
     store = get_or_create_store(phone)
     sid   = store['id']
 
@@ -950,36 +957,56 @@ async def api_send_image(
 
     media_url = f"/uploads/{filename}"
 
+    # Image quality check
+    quality_ok, quality_reason = check_image_quality(str(filepath))
+    img_lang = store.get('language') or language
+
+    if not quality_ok:
+        # Bad quality — tell user to resend, don't queue
+        save_web_message(sid, 'user', body=None, media_url=media_url)
+        save_web_message(sid, 'bot',
+                         f"⚠️ Photo quality issue ({quality_reason}). Please resend a clearer photo.")
+        return {'media_url': media_url, 'quality_ok': False, 'reason': quality_reason}
+
     # Save user message (image)
     user_msg_id = save_web_message(sid, 'user', body=None, media_url=media_url)
 
-    # Ack message while processing
-    img_lang = store.get('language') or language
-    ack_id = save_web_message(sid, 'bot', bt('photo_processing', img_lang))
+    # Add to operator queue
+    queue_id = add_to_operator_queue(sid, media_url, quality_ok=quality_ok)
 
-    # Mark processing in bot_state
-    current_state = get_bot_state(sid)
-    set_bot_state(sid, {**current_state, 'processing_image': True})
+    # Simple ack — no ConfirmCard, no state machine changes
+    save_web_message(sid, 'bot', bt('photo_processing', img_lang))
 
-    # Background: parse image and save reply
+    # Background: shadow parse (AI runs silently, result stored for operator pre-fill)
     background_tasks.add_task(
-        _process_web_image, phone, sid, str(filepath),
-        file.content_type or 'image/jpeg', media_url, language
+        _shadow_parse_image, sid, queue_id, str(filepath),
+        file.content_type or 'image/jpeg', language
     )
 
     return {
         'user_message_id': user_msg_id,
         'media_url': media_url,
+        'queue_id': queue_id,
         'processing': True,
     }
 
 
-def _process_web_image(phone: str, store_id: int, filepath: str,
-                       mime_type: str, media_url: str, language: str = 'hinglish'):
-    """Background: parse a locally-saved image and push reply to web_messages."""
+def _shadow_parse_image(store_id: int, queue_id: int, filepath: str,
+                        mime_type: str, language: str = 'hinglish'):
+    """Background: run AI parse silently and store result for operator pre-fill.
+    Does NOT send any message to user. Does NOT change bot_state."""
     try:
-        ctx    = build_store_context(store_id)
-        etags  = [t['tag'] for t in get_store_expense_tags(store_id, limit=15)]
+        ctx   = build_store_context(store_id)
+        etags = [t['tag'] for t in get_store_expense_tags(store_id, limit=15)]
+
+        # Fetch per-store vocabulary for AI prompt enrichment
+        store_vocab = {}
+        try:
+            ai_config = get_store_ai_config(store_id)
+            store_vocab = json.loads(ai_config.get('store_vocabulary') or '{}')
+        except Exception:
+            pass
+
         parsed = parse_image_message(
             image_url=None,
             local_path=filepath,
@@ -987,58 +1014,32 @@ def _process_web_image(phone: str, store_id: int, filepath: str,
             store_context=ctx,
             language=language,
             existing_tags=etags,
+            store_vocabulary=store_vocab,
         )
-        txns          = [t for t in parsed.get('transactions', []) if t.get('amount', 0) > 0]
-        persons_found = parsed.get('persons_found', [])
-        page_date     = parsed.get('date')
-
-        if not txns:
-            web_lang = language  # passed from caller
-            reply = (parsed.get('response_message') or
-                     bt('photo_empty', web_lang))
-            save_web_message(store_id, 'bot', reply)
-        else:
-            store = get_or_create_store(phone)
-            set_bot_state(store_id, {
-                'state':         'confirming',
-                'pending':       txns,
-                'persons_found': persons_found,
-                'persons_map':   {},
-                'raw_message':   '',
-                'source':        'image',
-                'page_date':     page_date,
-                'raw_ocr':       parsed.get('raw_ocr', ''),
-            })
-            reply   = format_pending_confirmation(txns, page_date)
-            qr      = ['haan'] + [f'galat {i+1}' for i in range(min(len(txns), 5))] + ['cancel']
-            display = parsed.get('display', None)
-            # Overwrite any previous unconfirmed ConfirmCard so only latest photo shows
-            old_msgs = get_web_messages(store_id, after_id=0, limit=30)
-            for om in old_msgs:
-                if om.get('direction') == 'bot' and (om.get('metadata') or {}).get('pending_transactions'):
-                    update_message_metadata(om['id'], {'overwritten': True})
-            # Save new ConfirmCard — include display layout and media_url so UI mirrors the notebook
-            save_web_message(store_id, 'bot', reply, quick_replies=qr,
-                             metadata={
-                                 'pending_transactions': txns,
-                                 'page_date':            page_date,
-                                 'display':              display,
-                                 'media_url':            media_url,  # for photo thumbnail in PhotoReviewCard
-                             })
-            log.info(f"Web image processed for store {store_id}: {len(txns)} transactions")
+        # Save full AI output as JSON to shadow parses table
+        ai_output_json = json.dumps(parsed, ensure_ascii=False, default=str)
+        save_shadow_parse(
+            store_id=store_id,
+            queue_id=queue_id,
+            image_path=filepath,
+            ai_output=ai_output_json,
+            model_used='claude-sonnet-4-20250514',
+            prompt_version='v1',
+        )
+        txns = [t for t in parsed.get('transactions', []) if t.get('amount', 0) > 0]
+        log.info(f"Shadow parse for queue {queue_id} (store {store_id}): {len(txns)} transactions")
 
     except Exception as e:
-        log.error(f"Web image processing failed: {e}")
-        save_web_message(store_id, 'bot',
-                         f"⚠️ Photo process karne mein error aaya. Dobara try karein.\n({str(e)[:80]})")
-    finally:
-        # Clear processing flag
-        try:
-            current = get_bot_state(store_id)
-            current.pop('processing_image', None)
-            set_bot_state(store_id, current)
-        except Exception:
-            pass
+        log.error(f"Shadow parse failed for queue {queue_id}: {e}")
+        # Save error as ai_output so operator knows AI failed
+        save_shadow_parse(
+            store_id=store_id,
+            queue_id=queue_id,
+            image_path=filepath,
+            ai_output=json.dumps({'error': str(e)[:200]}),
+            model_used='claude-sonnet-4-20250514',
+            prompt_version='v1',
+        )
 
 
 @app.get('/api/messages')
@@ -1601,6 +1602,33 @@ async def api_staff(phone: str, start: Optional[str] = None, end: Optional[str] 
     return {'staff': staff}
 
 
+@app.get('/api/suppliers')
+async def api_suppliers(phone: str, start: Optional[str] = None, end: Optional[str] = None):
+    """Returns supplier/party transaction summary."""
+    store = get_or_create_store(phone)
+    sid = store['id']
+    suppliers = get_supplier_detail(sid, start=start, end=end)
+    return {'suppliers': suppliers}
+
+
+@app.get('/api/others')
+async def api_others(phone: str, start: Optional[str] = None, end: Optional[str] = None):
+    """Returns other transactions (not dues, staff, or supplier)."""
+    store = get_or_create_store(phone)
+    sid = store['id']
+    others = get_others_detail(sid, start=start, end=end)
+    return {'others': others}
+
+
+@app.get('/api/others-grouped')
+async def api_others_grouped(phone: str, start: Optional[str] = None, end: Optional[str] = None):
+    """Returns other transactions grouped by description."""
+    store = get_or_create_store(phone)
+    sid = store['id']
+    groups = get_others_grouped(sid, start=start, end=end)
+    return {'groups': groups}
+
+
 @app.get('/api/expense-categories')
 async def api_expense_categories(phone: str):
     """Returns the store's existing expense tag categories (max 15)."""
@@ -1884,6 +1912,299 @@ async def api_tts(req: TTSRequest):
                 'timepoints': data.get('timepoints', []),   # [{markName, timeSeconds}, ...]
             }
         raise HTTPException(status_code=502, detail=f'Google TTS failed ({r.status_code}): {r.text[:300]}')
+
+
+# ── Operator Dashboard Admin API ──────────────────────────────
+
+def verify_admin_token(request: Request):
+    """Verify admin auth. Accepts X-Admin-Key header OR Bearer token.
+    Returns operator dict with id, username, name, role."""
+    # Check X-Admin-Key first (backward compat)
+    key = request.headers.get('X-Admin-Key', '')
+    if key == os.getenv('ADMIN_KEY', 'moneybook-admin-2026'):
+        return {'id': 0, 'username': 'system', 'name': 'System', 'role': 'admin'}
+
+    # Check Bearer token
+    auth = request.headers.get('Authorization', '')
+    if auth.startswith('Bearer '):
+        import base64, time as _time
+        try:
+            token = auth[7:]
+            decoded = base64.b64decode(token).decode()
+            parts = decoded.split(':')
+            op_id, username, ts, secret = int(parts[0]), parts[1], int(parts[2]), parts[3]
+            if secret != os.getenv('ADMIN_KEY', 'moneybook-admin-2026'):
+                raise HTTPException(status_code=401, detail='Invalid token')
+            # Token valid for 24 hours
+            if _time.time() - ts > 86400:
+                raise HTTPException(status_code=401, detail='Token expired')
+            operator = get_operator_by_id(op_id)
+            if not operator or not operator.get('active'):
+                raise HTTPException(status_code=401, detail='Operator inactive')
+            return operator
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=401, detail='Invalid token')
+
+    raise HTTPException(status_code=401, detail='Authentication required')
+
+
+@app.post('/api/admin/login')
+async def admin_login(body: dict = Body(...)):
+    """Operator login. Returns token and operator info."""
+    username = body.get('username', '')
+    password = body.get('password', '')
+    operator = verify_operator(username, password)
+    if not operator:
+        raise HTTPException(status_code=401, detail='Invalid credentials')
+
+    import base64, time as _time
+    secret = os.getenv('ADMIN_KEY', 'moneybook-admin-2026')
+    token_data = f"{operator['id']}:{operator['username']}:{int(_time.time())}:{secret}"
+    token = base64.b64encode(token_data.encode()).decode()
+
+    return {
+        'token': token,
+        'operator': {
+            'id': operator['id'],
+            'username': operator['username'],
+            'name': operator['name'],
+            'role': operator['role']
+        }
+    }
+
+
+@app.get('/api/admin/me')
+async def admin_me(request: Request):
+    """Verify token and return operator info."""
+    operator = verify_admin_token(request)
+    return {'operator': {
+        'id': operator['id'],
+        'username': operator['username'],
+        'name': operator['name'],
+        'role': operator['role']
+    }}
+
+
+@app.get('/api/admin/descriptions')
+async def admin_get_descriptions(request: Request, store_id: int, type: str):
+    """Get previously used descriptions and tags for a transaction type in a store."""
+    verify_admin_token(request)
+    descs = get_descriptions_by_type(store_id, type, limit=30)
+    tags = get_tags_by_type(store_id, type, limit=30)
+    return {'descriptions': descs, 'tags': tags}
+
+
+@app.get('/api/admin/queue')
+async def admin_get_queue(request: Request, status: str = 'pending'):
+    """List queue items with store name, thumbnail."""
+    verify_admin_token(request)
+    items = get_operator_queue(status=status)
+    return {'items': items}
+
+
+@app.post('/api/admin/queue/{queue_id}/pick')
+async def admin_pick_queue(request: Request, queue_id: int, operator_id: str = 'default'):
+    """Mark queue item as in_progress. Returns AI pre-fill if available."""
+    operator = verify_admin_token(request)
+    op_id = operator_id if operator_id != 'default' else str(operator.get('id', 'default'))
+    update_queue_status(queue_id, 'in_progress', op_id)
+    shadow = get_shadow_parse_for_queue(queue_id)
+    ai_prefill = None
+    if shadow and shadow.get('ai_output'):
+        try:
+            parsed = json.loads(shadow['ai_output'])
+            txns = parsed.get('transactions', [])
+            # Split into in/out for the operator form
+            in_entries = []
+            out_entries = []
+            for t in txns:
+                entry = {
+                    'description': t.get('description', ''),
+                    'amount': t.get('amount', 0),
+                    'type': t.get('type', ''),
+                    'person': t.get('person_name', ''),
+                    'tag': t.get('tag', ''),
+                    'confidence': t.get('confidence', None),
+                }
+                col = t.get('column', '')
+                if col == 'out' or t.get('type') in ('expense', 'dues_given', 'bank_deposit'):
+                    out_entries.append(entry)
+                else:
+                    in_entries.append(entry)
+            ai_prefill = {
+                'in': in_entries,
+                'out': out_entries,
+                'date': parsed.get('date'),
+            }
+        except Exception as e:
+            log.error(f"Failed to parse AI output for queue {queue_id}: {e}")
+    return {'status': 'picked', 'ai_prefill': ai_prefill}
+
+
+@app.post('/api/admin/queue/{queue_id}/complete')
+async def admin_complete_queue(request: Request, queue_id: int, body: dict = Body(...)):
+    """Operator saves entries. Saves to transactions table, notifies user."""
+    verify_admin_token(request)
+    transactions = body.get('transactions', [])
+    txn_date = body.get('date') or date.today().isoformat()
+    notes = body.get('notes', '')
+
+    # Get queue item to find store_id
+    from moneybook_db import get_db
+    with get_db() as conn:
+        q = conn.execute("SELECT * FROM operator_queue WHERE id = ?", (queue_id,)).fetchone()
+    if not q:
+        raise HTTPException(status_code=404, detail='Queue item not found')
+
+    store_id = q['store_id']
+    saved_ids = []
+
+    # Delete existing operator-sourced transactions for the same date to avoid duplicates
+    with get_db() as conn:
+        conn.execute(
+            "DELETE FROM transactions WHERE store_id = ? AND date = ? AND source = 'operator'",
+            (store_id, txn_date)
+        )
+
+    # Save each transaction
+    for txn in transactions:
+        if not txn.get('date'):
+            txn['date'] = txn_date
+        tid = add_transaction(store_id, txn, raw_message=None, source='operator')
+        saved_ids.append(tid)
+
+    # Mark queue completed
+    operator_output = json.dumps(transactions, ensure_ascii=False, default=str)
+    complete_queue_item(queue_id, operator_output)
+
+    # Score AI accuracy and trigger per-store learning
+    accuracy_result = None
+    try:
+        shadow = get_shadow_parse_for_queue(queue_id)
+        if shadow and shadow.get('ai_output'):
+            ai_parsed = json.loads(shadow['ai_output'])
+            ai_txns = ai_parsed.get('transactions', [])
+            result = compute_accuracy(ai_txns, transactions)
+            accuracy_result = result
+
+            # Update store learning (vocabulary, few-shots, mode transition)
+            update_store_learning(
+                store_id, queue_id, ai_txns, transactions,
+                result['overall_score']
+            )
+            log.info(
+                f"Queue {queue_id} accuracy: {result['overall_score']:.1f}% "
+                f"({len(result['matched_rows'])} matched, "
+                f"{len(result['missed_by_ai'])} missed, "
+                f"{len(result['hallucinated'])} hallucinated)"
+            )
+    except Exception as e:
+        log.error(f"AI scoring failed for queue {queue_id}: {e}")
+
+    # Notify user via web message
+    count = len(transactions)
+    save_web_message(store_id, 'bot',
+                     f"✅ {count} entr{'ies' if count != 1 else 'y'} saved from your photo!")
+
+    resp = {
+        'status': 'completed',
+        'saved_transaction_ids': saved_ids,
+        'count': count,
+    }
+    if accuracy_result:
+        resp['accuracy'] = {
+            'overall_score': accuracy_result['overall_score'],
+            'row_count_match': accuracy_result['row_count_match'],
+            'field_breakdown': accuracy_result['field_breakdown'],
+            'missed': len(accuracy_result['missed_by_ai']),
+            'hallucinated': len(accuracy_result['hallucinated']),
+        }
+    return resp
+
+
+@app.post('/api/admin/queue/{queue_id}/reject')
+async def admin_reject_queue(request: Request, queue_id: int):
+    """Bad photo — mark as skipped, notify user to resend."""
+    verify_admin_token(request)
+
+    from moneybook_db import get_db
+    with get_db() as conn:
+        q = conn.execute("SELECT * FROM operator_queue WHERE id = ?", (queue_id,)).fetchone()
+    if not q:
+        raise HTTPException(status_code=404, detail='Queue item not found')
+
+    update_queue_status(queue_id, 'skipped', notes='Rejected by operator — unclear photo')
+    save_web_message(q['store_id'], 'bot',
+                     "⚠️ Photo unclear. Please resend a clearer photo.")
+
+    return {'status': 'skipped'}
+
+
+@app.get('/api/admin/stats')
+async def admin_stats(request: Request):
+    """Dashboard stats: pending, in_progress, completed today, avg time, per-store accuracy."""
+    verify_admin_token(request)
+
+    from moneybook_db import get_db
+    with get_db() as conn:
+        pending = conn.execute(
+            "SELECT COUNT(*) FROM operator_queue WHERE status = 'pending'"
+        ).fetchone()[0]
+        in_progress = conn.execute(
+            "SELECT COUNT(*) FROM operator_queue WHERE status = 'in_progress'"
+        ).fetchone()[0]
+        completed_today = conn.execute(
+            "SELECT COUNT(*) FROM operator_queue WHERE status = 'completed' AND date(completed_at) = date('now')"
+        ).fetchone()[0]
+
+        # Average completion time (seconds) for items completed today
+        avg_time_row = conn.execute("""
+            SELECT AVG(
+                (julianday(completed_at) - julianday(created_at)) * 86400
+            ) AS avg_seconds
+            FROM operator_queue
+            WHERE status = 'completed' AND completed_at IS NOT NULL
+              AND date(completed_at) = date('now')
+        """).fetchone()
+        avg_seconds = avg_time_row['avg_seconds'] if avg_time_row else None
+
+        # Per-store accuracy scores
+        store_configs = conn.execute("""
+            SELECT sac.store_id, s.name AS store_name, sac.accuracy_score, sac.total_images
+            FROM store_ai_config sac
+            JOIN stores s ON s.id = sac.store_id
+            ORDER BY sac.total_images DESC
+        """).fetchall()
+
+    return {
+        'pending': pending,
+        'in_progress': in_progress,
+        'completed_today': completed_today,
+        'avg_completion_seconds': round(avg_seconds, 1) if avg_seconds else None,
+        'store_configs': [dict(r) for r in store_configs],
+    }
+
+
+@app.get('/api/admin/queue/poll')
+async def admin_poll_queue(request: Request, since: str = None):
+    """Check for new queue items since a timestamp. Returns count."""
+    verify_admin_token(request)
+
+    from moneybook_db import get_db
+    with get_db() as conn:
+        if since:
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM operator_queue WHERE created_at > ?",
+                (since,)
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM operator_queue WHERE status = 'pending'"
+            ).fetchone()
+
+    return {'new_items': row['cnt'], 'since': since}
 
 
 # ── Serve uploaded images ──────────────────────────────────────

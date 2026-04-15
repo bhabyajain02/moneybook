@@ -1,4 +1,10 @@
-const BASE = '/api'
+import { Capacitor } from '@capacitor/core'
+
+// On native mobile, use absolute URL. On web, relative (Vite proxy handles it).
+const BACKEND_URL = import.meta.env.VITE_API_URL || ''
+const BASE = Capacitor.isNativePlatform()
+  ? (BACKEND_URL || 'https://your-server.com') + '/api'
+  : '/api'
 
 // Safely parse JSON — returns {} if the response is HTML/empty (e.g. proxy error)
 async function safeJson(r) {
@@ -89,6 +95,30 @@ export async function fetchStaff(phone, start = null, end = null) {
   const r = await fetch(url)
   if (!r.ok) throw new Error('Staff fetch failed')
   return r.json()
+}
+
+export async function fetchSuppliers(phone, start, end) {
+  let url = `${BASE}/suppliers?phone=${encodeURIComponent(phone)}`
+  if (start) url += `&start=${start}`
+  if (end) url += `&end=${end}`
+  const r = await fetch(url)
+  return safeJson(r)
+}
+
+export async function fetchOthers(phone, start, end) {
+  let url = `${BASE}/others?phone=${encodeURIComponent(phone)}`
+  if (start) url += `&start=${start}`
+  if (end) url += `&end=${end}`
+  const r = await fetch(url)
+  return safeJson(r)
+}
+
+export async function fetchOthersGrouped(phone, start, end) {
+  let url = `${BASE}/others-grouped?phone=${encodeURIComponent(phone)}`
+  if (start) url += `&start=${start}`
+  if (end) url += `&end=${end}`
+  const r = await fetch(url)
+  return safeJson(r)
 }
 
 export async function fetchExpenseCategories(phone) {
@@ -216,4 +246,91 @@ export async function speakLedger(inEntries, outEntries, dateStr, language = 'hi
   })
   if (!r.ok) throw new Error('TTS unavailable')
   return r.json()  // { audio: '<base64 mp3>', voice: '...' }
+}
+
+/* ── Admin / Operator Dashboard API ──────────────────── */
+
+function getAdminHeaders() {
+  const token = localStorage.getItem('operator_token')
+  return {
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json'
+  }
+}
+
+export async function adminLogin(username, password) {
+  const r = await fetch(`${BASE}/admin/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password })
+  })
+  const data = await safeJson(r)
+  if (data.token) {
+    localStorage.setItem('operator_token', data.token)
+    localStorage.setItem('operator_info', JSON.stringify(data.operator))
+  }
+  return data
+}
+
+export async function adminVerifyToken() {
+  const token = localStorage.getItem('operator_token')
+  if (!token) return null
+  const r = await fetch(`${BASE}/admin/me`, {
+    headers: { 'Authorization': `Bearer ${token}` }
+  })
+  if (!r.ok) {
+    localStorage.removeItem('operator_token')
+    localStorage.removeItem('operator_info')
+    return null
+  }
+  return safeJson(r)
+}
+
+export function adminLogout() {
+  localStorage.removeItem('operator_token')
+  localStorage.removeItem('operator_info')
+}
+
+export async function adminGetQueue(status = 'pending') {
+  const r = await fetch(`${BASE}/admin/queue?status=${status}`, { headers: getAdminHeaders() })
+  return safeJson(r)
+}
+
+export async function adminPickQueue(queueId, operatorId = 'default') {
+  const r = await fetch(`${BASE}/admin/queue/${queueId}/pick?operator_id=${operatorId}`, {
+    method: 'POST', headers: getAdminHeaders()
+  })
+  return safeJson(r)
+}
+
+export async function adminCompleteQueue(queueId, data) {
+  const r = await fetch(`${BASE}/admin/queue/${queueId}/complete`, {
+    method: 'POST', headers: getAdminHeaders(), body: JSON.stringify(data)
+  })
+  return safeJson(r)
+}
+
+export async function adminRejectQueue(queueId) {
+  const r = await fetch(`${BASE}/admin/queue/${queueId}/reject`, {
+    method: 'POST', headers: getAdminHeaders()
+  })
+  return safeJson(r)
+}
+
+export async function adminGetStats() {
+  const r = await fetch(`${BASE}/admin/stats`, { headers: getAdminHeaders() })
+  return safeJson(r)
+}
+
+export async function adminPollQueue(since) {
+  const url = since ? `${BASE}/admin/queue/poll?since=${since}` : `${BASE}/admin/queue/poll`
+  const r = await fetch(url, { headers: getAdminHeaders() })
+  return safeJson(r)
+}
+
+export async function adminGetDescriptions(storeId, type) {
+  const r = await fetch(`${BASE}/admin/descriptions?store_id=${storeId}&type=${encodeURIComponent(type)}`, {
+    headers: getAdminHeaders()
+  })
+  return safeJson(r)
 }

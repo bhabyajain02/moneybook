@@ -267,10 +267,12 @@ export default function AnalyticsPage({
     setData(null);
     setLoading(true);
     setError(null);
-    const { start, end } = customRange || {};
-    fetchAnalytics(phone, period, start || null, end || null)
-      .then(setData)
-      .catch((e) => setError(e.message))
+    const { start: cStart, end: cEnd } = customRange || {};
+    fetchAnalytics(phone, period, cStart || null, cEnd || null)
+      .then((analyticsData) => {
+        setData(analyticsData);
+      })
+      .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
   }, [phone, period, customRange, refreshKey]);
 
@@ -782,6 +784,7 @@ export default function AnalyticsPage({
             })}
           </div>
         )}
+
       </div>
 
       {/* ══ Custom date range picker ════════════════════════════════════════════ */}

@@ -14,6 +14,7 @@ Tables:
 import sqlite3
 import os
 import json
+import hashlib
 from datetime import date, timedelta
 from contextlib import contextmanager
 from typing import Optional
@@ -146,8 +147,74 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_web_messages_store
                 ON web_messages (store_id, created_at);
+
+            -- Operator queue: images waiting for human operator review
+            CREATE TABLE IF NOT EXISTS operator_queue (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id     INTEGER NOT NULL,
+                image_path   TEXT NOT NULL,
+                status       TEXT DEFAULT 'pending',
+                operator_id  TEXT,
+                ai_parse_id  INTEGER,
+                quality_ok   INTEGER DEFAULT 1,
+                priority     INTEGER DEFAULT 0,
+                notes        TEXT,
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                FOREIGN KEY (store_id) REFERENCES stores (id)
+            );
+
+            -- AI shadow parses: background AI results for operator pre-fill
+            CREATE TABLE IF NOT EXISTS ai_shadow_parses (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id        INTEGER NOT NULL,
+                queue_id        INTEGER NOT NULL,
+                image_path      TEXT NOT NULL,
+                ai_output       TEXT NOT NULL,
+                operator_output TEXT,
+                accuracy_score  REAL,
+                model_used      TEXT,
+                prompt_version  TEXT,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (store_id) REFERENCES stores (id),
+                FOREIGN KEY (queue_id) REFERENCES operator_queue (id)
+            );
+
+            -- Per-store AI configuration and accuracy tracking
+            CREATE TABLE IF NOT EXISTS store_ai_config (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                store_id       INTEGER NOT NULL UNIQUE,
+                ai_mode        TEXT DEFAULT 'shadow',
+                accuracy_score REAL DEFAULT 0,
+                total_images   INTEGER DEFAULT 0,
+                few_shot_ids   TEXT DEFAULT '[]',
+                store_vocabulary TEXT DEFAULT '{}',
+                custom_prompt  TEXT,
+                last_eval_at   TIMESTAMP,
+                FOREIGN KEY (store_id) REFERENCES stores (id)
+            );
+
+            -- Operator users: separate login for dashboard operators
+            CREATE TABLE IF NOT EXISTS operator_users (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                username      TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                name          TEXT NOT NULL,
+                role          TEXT DEFAULT 'operator',  -- operator | admin
+                active        INTEGER DEFAULT 1,
+                created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         """)
         _migrate(conn)
+
+        # Seed default admin operator if no operators exist
+        count = conn.execute('SELECT COUNT(*) FROM operator_users').fetchone()[0]
+        if count == 0:
+            conn.execute(
+                'INSERT INTO operator_users (username, password_hash, name, role) VALUES (?, ?, ?, ?)',
+                ('admin', hash_password('admin123'), 'Admin', 'admin')
+            )
+
     print(f"✅ Database ready: {DB_PATH}")
 
 
@@ -1232,7 +1299,7 @@ def get_staff_detail(store_id: int, start: str = None, end: str = None) -> list:
     with get_db() as conn:
         staff_names = conn.execute("""
             SELECT DISTINCT person_name FROM transactions
-            WHERE store_id = ? AND person_category = 'staff' AND person_name IS NOT NULL
+            WHERE store_id = ? AND (person_category = 'staff' OR type IN ('staff_payment', 'staff_received')) AND person_name IS NOT NULL
             UNION
             SELECT DISTINCT name FROM persons WHERE store_id = ? AND category = 'staff'
         """, (store_id, store_id)).fetchall()
@@ -1243,28 +1310,25 @@ def get_staff_detail(store_id: int, start: str = None, end: str = None) -> list:
             if not name:
                 continue
 
-            # Net total in date range: expenses paid − receipts received
+            # Net total in date range: payments out − receipts back
             net_row = conn.execute("""
-                SELECT COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0)
-                     - COALESCE(SUM(CASE WHEN type = 'receipt' THEN amount ELSE 0 END), 0)
+                SELECT COALESCE(SUM(CASE WHEN type IN ('expense', 'staff_payment') THEN amount ELSE 0 END), 0)
+                     - COALESCE(SUM(CASE WHEN type IN ('receipt', 'staff_received') THEN amount ELSE 0 END), 0)
                 FROM transactions
                 WHERE store_id = ? AND person_name = ? COLLATE NOCASE
-                  AND (person_category = 'staff' OR person_category IS NULL)
-                  AND type IN ('expense', 'receipt')
-                  AND COALESCE(tag, '') IN ('staff_salary', 'staff_expense', 'staff expense', '')
-                  AND COALESCE(tag, '') != 'cash_discount'
+                  AND (person_category = 'staff' OR type IN ('staff_payment', 'staff_received'))
+                  AND type IN ('expense', 'receipt', 'staff_payment', 'staff_received')
                   AND date BETWEEN ? AND ?
             """, (store_id, name, start, end)).fetchone()
             net_total = net_row[0] if net_row else 0
 
-            # Recent transactions in range (both expenses and receipts)
+            # Recent transactions in range
             recent = conn.execute("""
                 SELECT date, amount, description, payment_mode, type
                 FROM transactions
                 WHERE store_id = ? AND person_name = ? COLLATE NOCASE
-                  AND (person_category = 'staff' OR person_category IS NULL)
-                  AND type IN ('expense', 'receipt')
-                  AND COALESCE(tag, '') != 'cash_discount'
+                  AND (person_category = 'staff' OR type IN ('staff_payment', 'staff_received'))
+                  AND type IN ('expense', 'receipt', 'staff_payment', 'staff_received')
                   AND date BETWEEN ? AND ?
                 ORDER BY date DESC, created_at DESC
                 LIMIT 10
@@ -1278,6 +1342,143 @@ def get_staff_detail(store_id: int, start: str = None, end: str = None) -> list:
 
         # Sort by absolute net total desc
         result.sort(key=lambda x: abs(x['net_total']), reverse=True)
+        return result
+
+
+def get_supplier_detail(store_id: int, start: str = None, end: str = None) -> list:
+    """Get supplier/party transactions grouped by person_name."""
+    today = date.today()
+    if not start:
+        start = '2000-01-01'
+    if not end:
+        end = today.isoformat()
+
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT person_name,
+                   COALESCE(SUM(CASE WHEN type IN ('expense', 'dues_given', 'supplier_payment')
+                                     AND type != 'receipt' THEN amount ELSE 0 END), 0) AS total_paid,
+                   COALESCE(SUM(CASE WHEN type IN ('receipt', 'dues_received', 'sale') THEN amount ELSE 0 END), 0) AS total_received,
+                   COUNT(*) AS transaction_count,
+                   MAX(date) AS last_date
+            FROM transactions
+            WHERE store_id = ?
+              AND (person_category = 'supplier' OR type = 'supplier_payment')
+              AND person_name IS NOT NULL AND person_name != ''
+              AND date BETWEEN ? AND ?
+            GROUP BY person_name COLLATE NOCASE
+        """, (store_id, start, end)).fetchall()
+
+        result = []
+        for r in rows:
+            total_paid = r['total_paid'] or 0
+            total_received = r['total_received'] or 0
+            net = total_paid - total_received
+            name = r['person_name']
+
+            # Fetch recent transactions for this supplier
+            recent = conn.execute("""
+                SELECT date, amount, description, type
+                FROM transactions
+                WHERE store_id = ? AND person_name = ? COLLATE NOCASE
+                  AND (person_category = 'supplier' OR type = 'supplier_payment')
+                  AND date BETWEEN ? AND ?
+                ORDER BY date DESC, created_at DESC
+                LIMIT 10
+            """, (store_id, name, start, end)).fetchall()
+
+            result.append({
+                'person_name':       name,
+                'total_paid':        total_paid,
+                'total_received':    total_received,
+                'net':               net,
+                'transaction_count': r['transaction_count'],
+                'last_date':         r['last_date'],
+                'recent_transactions': [dict(t) for t in recent],
+            })
+
+        result.sort(key=lambda x: x['total_paid'], reverse=True)
+        return result
+
+
+def get_others_detail(store_id: int, start: str = None, end: str = None) -> list:
+    """Get 'other' type transactions (not dues, staff, supplier, expense, sale)."""
+    today = date.today()
+    if not start:
+        start = '2000-01-01'
+    if not end:
+        end = today.isoformat()
+
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT id, date, description, amount, type, tag
+            FROM transactions
+            WHERE store_id = ?
+              AND type IN ('other', 'opening_balance', 'closing_balance', 'bank_deposit', 'receipt', 'upi_in_hand', 'cash_in_hand')
+              AND date BETWEEN ? AND ?
+            ORDER BY date DESC, created_at DESC
+        """, (store_id, start, end)).fetchall()
+
+        return [dict(r) for r in rows]
+
+
+def get_others_grouped(store_id: int, start: str = None, end: str = None) -> list:
+    """Get 'other' type transactions grouped by description.
+    Returns: [{description, total_amount, count, entries: [{id, date, amount, type}]}]
+    """
+    today = date.today()
+    if not start:
+        start = '2000-01-01'
+    if not end:
+        end = today.isoformat()
+
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT id, date, description, amount, type, tag
+            FROM transactions
+            WHERE store_id = ?
+              AND type IN ('other', 'opening_balance', 'closing_balance', 'bank_deposit', 'receipt', 'upi_in_hand', 'cash_in_hand')
+              AND date BETWEEN ? AND ?
+            ORDER BY date DESC, created_at DESC
+        """, (store_id, start, end)).fetchall()
+
+        # Types that should group by type name, not description
+        TYPE_GROUP_LABELS = {
+            'opening_balance': 'Opening Balance',
+            'closing_balance': 'Closing Balance',
+            'cash_in_hand':    'Cash in Hand',
+            'upi_in_hand':     'UPI in Hand',
+            'bank_deposit':    'Bank Deposit',
+        }
+
+        groups = {}
+        for r in rows:
+            row = dict(r)
+            txn_type = row.get('type', '')
+            # Group by type label for special types, by description for others
+            if txn_type in TYPE_GROUP_LABELS:
+                key = txn_type
+                label = TYPE_GROUP_LABELS[txn_type]
+            else:
+                key = (row.get('description') or row.get('tag') or 'Other').strip().lower()
+                label = row.get('description') or row.get('tag') or 'Other'
+            if key not in groups:
+                groups[key] = {
+                    'description': label,
+                    'total_amount': 0,
+                    'count': 0,
+                    'entries': [],
+                }
+            groups[key]['total_amount'] += row.get('amount', 0) or 0
+            groups[key]['count'] += 1
+            groups[key]['entries'].append({
+                'id': row['id'],
+                'date': row['date'],
+                'amount': row['amount'],
+                'type': row['type'],
+            })
+
+        result = sorted(groups.values(), key=lambda g: g['total_amount'], reverse=True)
         return result
 
 
@@ -1377,3 +1578,230 @@ def clear_store_data(store_id: int) -> None:
         conn.execute("DELETE FROM udhaar WHERE store_id = ?", (store_id,))
         conn.execute("DELETE FROM transactions WHERE store_id = ?", (store_id,))
         conn.execute("UPDATE stores SET bot_state = '{}' WHERE id = ?", (store_id,))
+
+
+# ─────────────────────────────────────────────
+# Operator Queue & AI Shadow Parse
+# ─────────────────────────────────────────────
+
+def add_to_operator_queue(store_id: int, image_path: str, quality_ok: bool = True) -> int:
+    """Add image to operator queue. Returns queue_id."""
+    with get_db() as conn:
+        cursor = conn.execute(
+            """INSERT INTO operator_queue (store_id, image_path, quality_ok)
+               VALUES (?, ?, ?)""",
+            (store_id, image_path, 1 if quality_ok else 0)
+        )
+        return cursor.lastrowid
+
+
+def get_operator_queue(status: str = 'pending', limit: int = 50) -> list:
+    """Get queue items with store info. Returns list of dicts."""
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT q.*, s.name AS store_name, s.phone AS store_phone
+            FROM operator_queue q
+            JOIN stores s ON s.id = q.store_id
+            WHERE q.status = ?
+            ORDER BY q.priority DESC, q.created_at ASC
+            LIMIT ?
+        """, (status, limit)).fetchall()
+        return [dict(r) for r in rows]
+
+
+def update_queue_status(queue_id: int, status: str, operator_id: str = None,
+                        notes: str = None):
+    """Update queue item status."""
+    with get_db() as conn:
+        parts = ["status = ?"]
+        vals  = [status]
+        if operator_id is not None:
+            parts.append("operator_id = ?")
+            vals.append(operator_id)
+        if notes is not None:
+            parts.append("notes = ?")
+            vals.append(notes)
+        if status == 'completed':
+            parts.append("completed_at = CURRENT_TIMESTAMP")
+        vals.append(queue_id)
+        conn.execute(
+            f"UPDATE operator_queue SET {', '.join(parts)} WHERE id = ?", vals
+        )
+
+
+def save_shadow_parse(store_id: int, queue_id: int, image_path: str,
+                      ai_output: str, model_used: str,
+                      prompt_version: str = 'v1') -> int:
+    """Save AI shadow parse result. Returns parse id."""
+    with get_db() as conn:
+        cursor = conn.execute("""
+            INSERT INTO ai_shadow_parses
+                (store_id, queue_id, image_path, ai_output, model_used, prompt_version)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (store_id, queue_id, image_path, ai_output, model_used, prompt_version))
+        parse_id = cursor.lastrowid
+        # Link shadow parse to queue item
+        conn.execute(
+            "UPDATE operator_queue SET ai_parse_id = ? WHERE id = ?",
+            (parse_id, queue_id)
+        )
+        return parse_id
+
+
+def get_shadow_parse_for_queue(queue_id: int) -> Optional[dict]:
+    """Get AI shadow parse for a queue item (for operator pre-fill)."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM ai_shadow_parses WHERE queue_id = ?", (queue_id,)
+        ).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        # Parse the JSON ai_output for convenience
+        try:
+            d['ai_output_parsed'] = json.loads(d['ai_output'])
+        except Exception:
+            d['ai_output_parsed'] = None
+        return d
+
+
+def complete_queue_item(queue_id: int, operator_output: str):
+    """Mark queue completed, save operator output to shadow parse, update store_ai_config."""
+    with get_db() as conn:
+        # Get queue item
+        q = conn.execute("SELECT * FROM operator_queue WHERE id = ?", (queue_id,)).fetchone()
+        if not q:
+            return
+        store_id = q['store_id']
+
+        # Update queue status
+        conn.execute(
+            "UPDATE operator_queue SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (queue_id,)
+        )
+
+        # Save operator output to shadow parse (if exists)
+        shadow = conn.execute(
+            "SELECT * FROM ai_shadow_parses WHERE queue_id = ?", (queue_id,)
+        ).fetchone()
+        if shadow:
+            conn.execute(
+                "UPDATE ai_shadow_parses SET operator_output = ? WHERE queue_id = ?",
+                (operator_output, queue_id)
+            )
+
+        # Update store_ai_config totals
+        conn.execute("""
+            INSERT INTO store_ai_config (store_id, total_images)
+            VALUES (?, 1)
+            ON CONFLICT(store_id) DO UPDATE SET total_images = total_images + 1
+        """, (store_id,))
+
+
+def get_store_ai_config(store_id: int) -> dict:
+    """Get or create store_ai_config. Returns dict."""
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM store_ai_config WHERE store_id = ?", (store_id,)
+        ).fetchone()
+        if row:
+            return dict(row)
+        # Create default config
+        conn.execute(
+            "INSERT INTO store_ai_config (store_id) VALUES (?)", (store_id,)
+        )
+        row = conn.execute(
+            "SELECT * FROM store_ai_config WHERE store_id = ?", (store_id,)
+        ).fetchone()
+        return dict(row)
+
+
+def update_store_ai_config(store_id: int, **kwargs):
+    """Update store_ai_config fields."""
+    if not kwargs:
+        return
+    # Ensure row exists
+    get_store_ai_config(store_id)
+    cols = ', '.join(f"{k} = ?" for k in kwargs)
+    with get_db() as conn:
+        conn.execute(
+            f"UPDATE store_ai_config SET {cols} WHERE store_id = ?",
+            list(kwargs.values()) + [store_id]
+        )
+
+
+# ─────────────────────────────────────────────
+# Operator Users
+# ─────────────────────────────────────────────
+
+def hash_password(password: str) -> str:
+    """Hash a password using SHA-256."""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
+def create_operator(username: str, password: str, name: str, role: str = 'operator') -> int:
+    """Create a new operator user. Returns the new operator's id."""
+    with get_db() as conn:
+        cur = conn.execute(
+            'INSERT INTO operator_users (username, password_hash, name, role) VALUES (?, ?, ?, ?)',
+            (username, hash_password(password), name, role)
+        )
+        return cur.lastrowid
+
+
+def verify_operator(username: str, password: str):
+    """Check username/password. Returns operator dict or None."""
+    with get_db() as conn:
+        row = conn.execute(
+            'SELECT * FROM operator_users WHERE username = ? AND password_hash = ? AND active = 1',
+            (username, hash_password(password))
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_operator_by_id(operator_id: int):
+    """Get operator by id. Returns dict or None."""
+    with get_db() as conn:
+        row = conn.execute(
+            'SELECT * FROM operator_users WHERE id = ?', (operator_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def list_operators():
+    """List all active operators."""
+    with get_db() as conn:
+        rows = conn.execute(
+            'SELECT id, username, name, role, created_at FROM operator_users WHERE active = 1'
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_descriptions_by_type(store_id, txn_type, limit=30):
+    """Get distinct descriptions used for a given transaction type in this store.
+    Returns list of strings sorted by frequency (most common first)."""
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT description, COUNT(*) as cnt
+            FROM transactions
+            WHERE store_id = ? AND type = ? AND description IS NOT NULL AND description != ''
+            GROUP BY LOWER(description)
+            ORDER BY cnt DESC
+            LIMIT ?
+        """, (store_id, txn_type, limit)).fetchall()
+        return [r['description'] for r in rows]
+
+
+def get_tags_by_type(store_id, txn_type, limit=30):
+    """Get distinct tags used for a given transaction type in this store.
+    Returns list of strings sorted by frequency (most common first)."""
+    with get_db() as conn:
+        rows = conn.execute("""
+            SELECT tag, COUNT(*) as cnt
+            FROM transactions
+            WHERE store_id = ? AND type = ? AND tag IS NOT NULL AND tag != ''
+            GROUP BY LOWER(tag)
+            ORDER BY cnt DESC
+            LIMIT ?
+        """, (store_id, txn_type, limit)).fetchall()
+        return [r['tag'] for r in rows]

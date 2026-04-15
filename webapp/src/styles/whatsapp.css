@@ -2675,3 +2675,434 @@ html, body, #root {
   cursor: pointer;
   font-size: 14px;
 }
+
+/* ══════════════════════════════════════════════════════════
+   Operator Dashboard — desktop-first admin layout
+   ══════════════════════════════════════════════════════════ */
+
+.operator-root {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #f0f2f5;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  font-size: 14px;
+  color: #1a1a1a;
+}
+
+/* ── Top Bar ─────────────────────────────────────────── */
+
+.operator-topbar {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 10px 20px;
+  background: #075E54;
+  color: #fff;
+  flex-shrink: 0;
+}
+
+.operator-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin-right: auto;
+}
+
+.operator-stats {
+  display: flex;
+  gap: 16px;
+  font-size: 13px;
+  opacity: 0.9;
+}
+
+.operator-stat b { font-weight: 600; }
+
+.operator-store-ctx {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  padding-left: 16px;
+  border-left: 1px solid rgba(255,255,255,0.3);
+}
+
+.operator-badge {
+  background: rgba(255,255,255,0.2);
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+/* ── Body (sidebar + main) ───────────────────────────── */
+
+.operator-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── Sidebar ─────────────────────────────────────────── */
+
+.operator-sidebar {
+  width: 30%;
+  min-width: 260px;
+  max-width: 380px;
+  background: #fff;
+  border-right: 1px solid #ddd;
+  display: flex;
+  flex-direction: column;
+}
+
+.operator-sidebar-header {
+  padding: 12px 16px;
+  font-weight: 600;
+  font-size: 15px;
+  border-bottom: 1px solid #e9edef;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.operator-count-badge {
+  background: #25D366;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+  min-width: 22px;
+  text-align: center;
+}
+
+.operator-queue-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.operator-empty {
+  padding: 40px 16px;
+  text-align: center;
+  color: #888;
+}
+
+.operator-queue-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid #f0f0f0;
+  transition: background 0.15s;
+}
+
+.operator-queue-item:hover { background: #f5f6f6; }
+.operator-queue-item.active { background: #e8f5e9; }
+
+.operator-urgency-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.operator-urg-green  { background: #25D366; }
+.operator-urg-yellow { background: #f0ad4e; }
+.operator-urg-red    { background: #e74c3c; }
+
+.operator-thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: #eee;
+}
+
+.operator-queue-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.operator-queue-name {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.operator-queue-time {
+  font-size: 12px;
+  color: #888;
+  margin-top: 2px;
+}
+
+/* ── Main Area ───────────────────────────────────────── */
+
+.operator-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.operator-placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #999;
+  font-size: 16px;
+}
+
+.operator-placeholder-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+/* ── Photo Viewer ────────────────────────────────────── */
+
+.operator-photo-area {
+  flex: 1;
+  min-height: 200px;
+  display: flex;
+  flex-direction: column;
+  background: #1a1a1a;
+  position: relative;
+}
+
+.operator-photo-toolbar {
+  display: flex;
+  gap: 6px;
+  padding: 8px 12px;
+  background: rgba(0,0,0,0.6);
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+}
+
+.operator-btn-sm {
+  padding: 4px 10px;
+  border: 1px solid rgba(255,255,255,0.3);
+  background: rgba(255,255,255,0.1);
+  color: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.operator-btn-sm:hover { background: rgba(255,255,255,0.25); }
+
+.operator-photo-container {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 12px 12px;
+}
+
+.operator-photo {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  transition: transform 0.2s;
+}
+
+.operator-no-photo {
+  color: #888;
+  font-size: 15px;
+}
+
+/* ── Entry Form ──────────────────────────────────────── */
+
+.operator-form-area {
+  flex-shrink: 0;
+  background: #fff;
+  border-top: 2px solid #e9edef;
+  padding: 12px 16px;
+  max-height: 50%;
+  overflow-y: auto;
+}
+
+.operator-form-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.operator-date-label {
+  font-weight: 600;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.operator-date-input {
+  padding: 4px 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.operator-columns {
+  display: flex;
+  gap: 16px;
+}
+
+.operator-col {
+  flex: 1;
+  min-width: 0;
+}
+
+.operator-col-header {
+  font-weight: 700;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  margin-bottom: 6px;
+  text-align: center;
+}
+
+.operator-col-in  { background: #e8f5e9; color: #2e7d32; }
+.operator-col-out { background: #fbe9e7; color: #c62828; }
+
+.operator-row {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 4px;
+  align-items: center;
+  cursor: grab;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.operator-row:active { cursor: grabbing; }
+.operator-row[draggable]:hover { border-color: #ccc; background: #fafafa; }
+
+.operator-conf-high { background: #e8f5e9; border-radius: 3px; }
+.operator-conf-low  { background: #fff8e1; border-radius: 3px; }
+
+.operator-input {
+  padding: 5px 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 13px;
+  outline: none;
+}
+
+.operator-input:focus { border-color: #075E54; box-shadow: 0 0 0 2px rgba(7,94,84,0.15); }
+
+.operator-input-desc { flex: 2; min-width: 0; }
+.operator-input-amt  { flex: 1; min-width: 60px; max-width: 100px; text-align: right; }
+
+.operator-type-select {
+  width: 100px;
+  padding: 4px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+.operator-person-input {
+  width: 80px;
+  padding: 4px 6px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+.operator-tag-input {
+  width: 90px;
+  padding: 4px 6px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+
+.operator-btn-x {
+  background: none;
+  border: none;
+  color: #c62828;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  opacity: 0.5;
+}
+
+.operator-btn-x:hover { opacity: 1; }
+
+.operator-btn-add {
+  background: none;
+  border: 1px dashed #ccc;
+  padding: 4px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #666;
+  cursor: pointer;
+  margin-top: 4px;
+  width: 100%;
+}
+
+.operator-btn-add:hover { border-color: #075E54; color: #075E54; }
+
+/* ── Action Buttons ──────────────────────────────────── */
+
+.operator-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #e9edef;
+}
+
+.operator-btn {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.operator-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.operator-btn-save {
+  background: #25D366;
+  color: #fff;
+}
+
+.operator-btn-save:hover:not(:disabled) { background: #1fba59; }
+
+.operator-btn-reject {
+  background: #e74c3c;
+  color: #fff;
+}
+
+.operator-btn-reject:hover:not(:disabled) { background: #c0392b; }
+
+.operator-btn-skip {
+  background: #eee;
+  color: #333;
+}
+
+.operator-btn-skip:hover:not(:disabled) { background: #ddd; }
+
+.operator-shortcut-hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: #999;
+}
