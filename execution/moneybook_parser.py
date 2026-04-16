@@ -64,7 +64,12 @@ if not _api_key:
         "Add it to your .env file."
     )
 
-_client = anthropic.Anthropic(api_key=_api_key)
+# Support Emergent LLM proxy: if key starts with sk-emergent, route through integration proxy
+_anthropic_kwargs = {'api_key': _api_key}
+_proxy_url = os.getenv('INTEGRATION_PROXY_URL')
+if _api_key.startswith('sk-emergent') and _proxy_url:
+    _anthropic_kwargs['base_url'] = f"{_proxy_url}/anthropic/v1"
+_client = anthropic.Anthropic(**_anthropic_kwargs)
 
 # ── Gemini fallback setup ────────────────────────────────────────
 _gemini_key = os.getenv('GEMINI_API_KEY') or os.getenv('GOOGLE_API_KEY')
