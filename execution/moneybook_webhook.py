@@ -645,6 +645,7 @@ async def whatsapp_webhook(
 # ─────────────────────────────────────────────
 
 @app.get('/health')
+@app.get('/api/health')
 def health():
     return {'status': 'ok', 'service': 'MoneyBook v2', 'date': date.today().isoformat()}
 
@@ -2169,7 +2170,7 @@ _uploads_dir.mkdir(parents=True, exist_ok=True)
 app.mount('/uploads', StaticFiles(directory=str(_uploads_dir)), name='uploads')
 
 # ── Serve React webapp (MUST be last — catches all remaining routes) ──
-_webapp_dist = Path(__file__).parent.parent / 'webapp' / 'dist'
+_webapp_dist = Path(__file__).parent.parent / 'frontend' / 'dist'
 if _webapp_dist.exists():
     from fastapi.responses import HTMLResponse, FileResponse
     from fastapi import Request

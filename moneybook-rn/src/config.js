@@ -6,7 +6,9 @@
 //   Physical device:  http://YOUR_COMPUTER_IP:8000/api
 //   Production:       https://your-app.railway.app/api
 
-export const BASE_URL = 'https://YOUR_BACKEND_URL/api'
+export const BASE_URL = (typeof process !== 'undefined' && process.env && process.env.EXPO_PUBLIC_BACKEND_URL)
+  ? process.env.EXPO_PUBLIC_BACKEND_URL + '/api'
+  : 'https://YOUR_BACKEND_URL/api'
 
 // Examples:
 // export const BASE_URL = 'http://10.0.2.2:8000/api'       // Android emulator local
