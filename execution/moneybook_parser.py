@@ -55,7 +55,7 @@ def check_image_quality(filepath: str) -> tuple:
 
 # Load .env from project root (parent of execution/)
 _ENV_PATH = Path(__file__).resolve().parent.parent / '.env'
-load_dotenv(dotenv_path=_ENV_PATH, override=True)
+load_dotenv(dotenv_path=_ENV_PATH, override=False)
 
 _api_key = os.getenv('ANTHROPIC_API_KEY')
 if not _api_key:

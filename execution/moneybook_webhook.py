@@ -32,7 +32,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 # Load .env from project root regardless of working directory
-load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / '.env', override=True)
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / '.env', override=False)
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -2052,9 +2052,8 @@ async def admin_complete_queue(request: Request, queue_id: int, body: dict = Bod
     notes = body.get('notes', '')
 
     # Get queue item to find store_id
-    from moneybook_db import get_db
-    with get_db() as conn:
-        q = conn.execute("SELECT * FROM operator_queue WHERE id = ?", (queue_id,)).fetchone()
+    from moneybook_db import get_queue_item, delete_operator_transactions
+    q = get_queue_item(queue_id)
     if not q:
         raise HTTPException(status_code=404, detail='Queue item not found')
 
@@ -2062,11 +2061,7 @@ async def admin_complete_queue(request: Request, queue_id: int, body: dict = Bod
     saved_ids = []
 
     # Delete existing operator-sourced transactions for the same date to avoid duplicates
-    with get_db() as conn:
-        conn.execute(
-            "DELETE FROM transactions WHERE store_id = ? AND date = ? AND source = 'operator'",
-            (store_id, txn_date)
-        )
+    delete_operator_transactions(store_id, txn_date)
 
     # Save each transaction
     for txn in transactions:
@@ -2129,9 +2124,8 @@ async def admin_reject_queue(request: Request, queue_id: int):
     """Bad photo — mark as skipped, notify user to resend."""
     verify_admin_token(request)
 
-    from moneybook_db import get_db
-    with get_db() as conn:
-        q = conn.execute("SELECT * FROM operator_queue WHERE id = ?", (queue_id,)).fetchone()
+    from moneybook_db import get_queue_item
+    q = get_queue_item(queue_id)
     if not q:
         raise HTTPException(status_code=404, detail='Queue item not found')
 
@@ -2147,44 +2141,8 @@ async def admin_stats(request: Request):
     """Dashboard stats: pending, in_progress, completed today, avg time, per-store accuracy."""
     verify_admin_token(request)
 
-    from moneybook_db import get_db
-    with get_db() as conn:
-        pending = conn.execute(
-            "SELECT COUNT(*) FROM operator_queue WHERE status = 'pending'"
-        ).fetchone()[0]
-        in_progress = conn.execute(
-            "SELECT COUNT(*) FROM operator_queue WHERE status = 'in_progress'"
-        ).fetchone()[0]
-        completed_today = conn.execute(
-            "SELECT COUNT(*) FROM operator_queue WHERE status = 'completed' AND date(completed_at) = date('now')"
-        ).fetchone()[0]
-
-        # Average completion time (seconds) for items completed today
-        avg_time_row = conn.execute("""
-            SELECT AVG(
-                (julianday(completed_at) - julianday(created_at)) * 86400
-            ) AS avg_seconds
-            FROM operator_queue
-            WHERE status = 'completed' AND completed_at IS NOT NULL
-              AND date(completed_at) = date('now')
-        """).fetchone()
-        avg_seconds = avg_time_row['avg_seconds'] if avg_time_row else None
-
-        # Per-store accuracy scores
-        store_configs = conn.execute("""
-            SELECT sac.store_id, s.name AS store_name, sac.accuracy_score, sac.total_images
-            FROM store_ai_config sac
-            JOIN stores s ON s.id = sac.store_id
-            ORDER BY sac.total_images DESC
-        """).fetchall()
-
-    return {
-        'pending': pending,
-        'in_progress': in_progress,
-        'completed_today': completed_today,
-        'avg_completion_seconds': round(avg_seconds, 1) if avg_seconds else None,
-        'store_configs': [dict(r) for r in store_configs],
-    }
+    from moneybook_db import get_admin_stats
+    return get_admin_stats()
 
 
 @app.get('/api/admin/queue/poll')
@@ -2192,19 +2150,8 @@ async def admin_poll_queue(request: Request, since: str = None):
     """Check for new queue items since a timestamp. Returns count."""
     verify_admin_token(request)
 
-    from moneybook_db import get_db
-    with get_db() as conn:
-        if since:
-            row = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM operator_queue WHERE created_at > ?",
-                (since,)
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT COUNT(*) AS cnt FROM operator_queue WHERE status = 'pending'"
-            ).fetchone()
-
-    return {'new_items': row['cnt'], 'since': since}
+    from moneybook_db import poll_operator_queue
+    return poll_operator_queue(since)
 
 
 # ── Serve uploaded images ──────────────────────────────────────

@@ -429,7 +429,7 @@ def update_store_learning(store_id: int, queue_id: int,
     4. Select few-shot examples
     5. Check mode transition thresholds
     """
-    from moneybook_db import get_store_ai_config, update_store_ai_config, get_db
+    from moneybook_db import get_store_ai_config, update_store_ai_config, update_shadow_parse_accuracy, get_shadow_parse_accuracy
 
     config = get_store_ai_config(store_id)
 
@@ -445,11 +445,7 @@ def update_store_learning(store_id: int, queue_id: int,
     new_avg = round(new_avg, 2)
 
     # 2. Save accuracy_score to the shadow parse row
-    with get_db() as conn:
-        conn.execute(
-            "UPDATE ai_shadow_parses SET accuracy_score = ? WHERE queue_id = ?",
-            (accuracy_score, queue_id)
-        )
+    update_shadow_parse_accuracy(queue_id, accuracy_score)
 
     # 3. Learn vocabulary from operator corrections
     result = compute_accuracy(ai_output, operator_output)
@@ -475,14 +471,10 @@ def update_store_learning(store_id: int, queue_id: int,
 
     # Build scores dict for existing few-shots
     few_shot_scores = {}
-    with get_db() as conn:
-        for fid in current_ids:
-            row = conn.execute(
-                "SELECT accuracy_score FROM ai_shadow_parses WHERE queue_id = ?",
-                (fid,)
-            ).fetchone()
-            if row and row['accuracy_score'] is not None:
-                few_shot_scores[fid] = row['accuracy_score']
+    for fid in current_ids:
+        score = get_shadow_parse_accuracy(fid)
+        if score is not None:
+            few_shot_scores[fid] = score
 
     updated_ids = select_few_shot_examples(
         store_id=store_id,

@@ -3,7 +3,7 @@ import { Capacitor } from '@capacitor/core'
 // On native mobile, use absolute URL. On web, relative (Vite proxy handles it).
 const BACKEND_URL = import.meta.env.VITE_API_URL || ''
 const BASE = Capacitor.isNativePlatform()
-  ? (BACKEND_URL || 'https://your-server.com') + '/api'
+  ? BACKEND_URL + '/api'
   : '/api'
 
 // Safely parse JSON — returns {} if the response is HTML/empty (e.g. proxy error)
