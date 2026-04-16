@@ -24,6 +24,7 @@ from typing import Optional
 from fastapi import FastAPI, Form, BackgroundTasks, UploadFile, File, HTTPException, Request, Body
 from fastapi.responses import PlainTextResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from twilio.rest import Client as TwilioClient
 from twilio.twiml.messaging_response import MessagingResponse
@@ -81,6 +82,14 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 log = logging.getLogger('moneybook')
 
 app = FastAPI(title='MoneyBook', version='2.0')
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 PERSON_CATEGORIES = {
     '1': 'staff',
