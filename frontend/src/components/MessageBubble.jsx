@@ -203,7 +203,7 @@ export default function MessageBubble({ msg, phone, onConfirm, onCancel, onPendi
       <div className="bubble">
         {/* Image attachment — hidden when PhotoReviewCard is shown (it has its own thumbnail) */}
         {media_url && !showPhotoReview && (
-          <img src={normalizeImageUrl(media_url)} alt="attachment" className="bubble-image"
+          <img src={normalizeImageUrl(media_url)} alt="Uploaded photo" className="bubble-image"
                onClick={() => window.open(normalizeImageUrl(media_url), '_blank')} />
         )}
 
