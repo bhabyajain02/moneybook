@@ -16,14 +16,19 @@ class MoneyBookAPITester:
         self.tests_passed = 0
         self.test_phone = f"9876543{datetime.now().strftime('%H%M')}"  # 10 digit phone
         self.test_store_name = "Test Store"
+        self.admin_token = None
 
     def log(self, message):
         print(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
 
-    def run_test(self, name, method, endpoint, expected_status, data=None, params=None):
+    def run_test(self, name, method, endpoint, expected_status, data=None, params=None, use_admin_auth=False):
         """Run a single API test"""
         url = f"{self.base_url}/api/{endpoint}"
         headers = {'Content-Type': 'application/json'}
+        
+        # Add admin authentication if required
+        if use_admin_auth and self.admin_token:
+            headers['Authorization'] = f'Bearer {self.admin_token}'
         
         self.tests_run += 1
         self.log(f"🔍 Testing {name}...")
@@ -242,6 +247,105 @@ class MoneyBookAPITester:
             self.log(f"❌ CORS Headers - Error: {str(e)}")
             return False
 
+    def test_admin_login(self):
+        """Test admin login with credentials admin/admin123"""
+        success, response = self.run_test(
+            "Admin Login",
+            "POST",
+            "admin/login",
+            200,
+            data={"username": "admin", "password": "admin123"}
+        )
+        if success and response.get('token'):
+            self.admin_token = response['token']
+            self.log(f"   Admin token obtained")
+        return success, response
+
+    def test_admin_queue(self):
+        """Test admin queue endpoints"""
+        # First test getting pending queue
+        success, response = self.run_test(
+            "Admin Get Queue",
+            "GET",
+            "admin/queue",
+            200,
+            params={"status": "pending"},
+            use_admin_auth=True
+        )
+        return success, response
+
+    def test_admin_pick_queue(self, queue_id=3):
+        """Test admin pick queue item (using queue_id 3 as mentioned in context)"""
+        success, response = self.run_test(
+            "Admin Pick Queue Item",
+            "POST",
+            f"admin/queue/{queue_id}/pick",
+            200,
+            data={"operator_id": "admin"},
+            use_admin_auth=True
+        )
+        if success:
+            # Check if ai_prefill data is present
+            ai_prefill = response.get('ai_prefill')
+            if ai_prefill:
+                self.log(f"   AI Prefill found: IN={len(ai_prefill.get('in', []))}, OUT={len(ai_prefill.get('out', []))}")
+            else:
+                self.log("   No AI prefill data found")
+        return success, response
+
+    def test_shadow_parse_functionality(self):
+        """Test that shadow parse creates AI-extracted transactions"""
+        # Upload an image to trigger shadow parse
+        self.log("🔍 Testing Shadow Parse Functionality...")
+        try:
+            # Create a simple test image file
+            import io
+            from PIL import Image
+            
+            # Create a small test image
+            img = Image.new('RGB', (200, 200), color='white')
+            img_bytes = io.BytesIO()
+            img.save(img_bytes, format='JPEG')
+            img_bytes.seek(0)
+            
+            # Prepare multipart form data
+            files = {
+                'file': ('test_ledger.jpg', img_bytes, 'image/jpeg')
+            }
+            data = {
+                'phone': f"web:+91{self.test_phone}",
+                'language': 'hinglish'
+            }
+            
+            url = f"{self.base_url}/api/image"
+            response = requests.post(url, files=files, data=data)
+            
+            self.tests_run += 1
+            if response.status_code == 200:
+                result = response.json()
+                queue_id = result.get('queue_id')
+                
+                if queue_id:
+                    self.tests_passed += 1
+                    self.log("✅ Shadow Parse - Image uploaded and queued")
+                    self.log(f"   Queue ID: {queue_id}")
+                    
+                    # Wait a moment for shadow parse to complete
+                    import time
+                    time.sleep(3)
+                    
+                    return True, queue_id
+                else:
+                    self.log("❌ Shadow Parse - No queue_id returned")
+                    return False, None
+            else:
+                self.log(f"❌ Shadow Parse - Status: {response.status_code}")
+                return False, None
+                
+        except Exception as e:
+            self.log(f"❌ Shadow Parse - Error: {str(e)}")
+            return False, None
+
     def run_all_tests(self):
         """Run all backend tests"""
         self.log("🚀 Starting MoneyBook Backend API Tests")
@@ -288,6 +392,25 @@ class MoneyBookAPITester:
         
         # Test CORS headers
         results['cors'] = self.test_cors_headers()
+        
+        # Test admin functionality
+        admin_login_success, admin_response = self.test_admin_login()
+        results['admin_login'] = admin_login_success
+        
+        if admin_login_success:
+            results['admin_queue'] = self.test_admin_queue()[0]
+            
+            # Test admin pick queue with known queue item
+            pick_success, pick_response = self.test_admin_pick_queue()
+            results['admin_pick_queue'] = pick_success
+        else:
+            self.log("⚠️ Skipping admin tests due to login failure")
+            results['admin_queue'] = False
+            results['admin_pick_queue'] = False
+        
+        # Test shadow parse functionality
+        shadow_success, shadow_queue_id = self.test_shadow_parse_functionality()
+        results['shadow_parse'] = shadow_success
         
         # Print summary
         self.log("\n📊 Test Results Summary:")

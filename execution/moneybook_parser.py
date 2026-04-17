@@ -68,7 +68,7 @@ if not _api_key:
 _anthropic_kwargs = {'api_key': _api_key}
 _proxy_url = os.getenv('INTEGRATION_PROXY_URL')
 if _api_key.startswith('sk-emergent') and _proxy_url:
-    _anthropic_kwargs['base_url'] = f"{_proxy_url}/anthropic/v1"
+    _anthropic_kwargs['base_url'] = f"{_proxy_url}/anthropic"
 _client = anthropic.Anthropic(**_anthropic_kwargs)
 
 # ── Gemini fallback setup ────────────────────────────────────────
@@ -443,24 +443,90 @@ def _safe_parse(raw: str, fallback_msg: str) -> dict:
                 'response_message': fallback_msg}
 
 
+_USE_EMERGENT = _api_key.startswith('sk-emergent')
+
+# Model name mapping: parser names → emergentintegrations names
+_EMERGENT_MODEL_MAP = {
+    'claude-opus-4-6': 'claude-opus-4-6',
+    'claude-sonnet-4-5': 'claude-sonnet-4-5-20250929',
+    'claude-haiku-4-5': 'claude-haiku-4-5-20251001',
+}
+
+
 def _call_claude(model: str, prompt: str,
                  image_bytes: bytes = None, image_mime: str = None,
                  use_thinking: bool = False,
                  retries: int = 3) -> str:
     """
     Call Claude with optional image and optional extended thinking.
-
-    use_thinking=True:
-      Enables Claude's extended thinking — a private reasoning scratchpad
-      before producing the final answer. This is what makes Claude in the API
-      as smart as Claude in chat: it reasons through ambiguities, uses world
-      knowledge to infer unknown vocabulary, cross-checks totals, etc.
-
-      Cost: ~2-3x more tokens. Worth it for complex handwritten images.
-      The thinking content is discarded — only the final text response is returned.
-
-    Returns the text content of the response (thinking block excluded).
+    Routes through emergentintegrations library when using Emergent LLM key,
+    otherwise uses the standard Anthropic SDK.
     """
+    if _USE_EMERGENT:
+        return _call_claude_emergent(model, prompt, image_bytes, image_mime, retries=retries)
+
+    return _call_claude_sdk(model, prompt, image_bytes, image_mime,
+                            use_thinking=use_thinking, retries=retries)
+
+
+def _call_claude_emergent(model: str, prompt: str,
+                          image_bytes: bytes = None, image_mime: str = None,
+                          retries: int = 3) -> str:
+    """Call Claude via emergentintegrations library (Emergent LLM key)."""
+    import asyncio
+    import uuid as _uuid
+    from emergentintegrations.llm.chat import LlmChat, UserMessage, ImageContent
+
+    mapped_model = _EMERGENT_MODEL_MAP.get(model, model)
+
+    async def _async_call():
+        chat = LlmChat(
+            api_key=_api_key,
+            session_id=f"moneybook-{_uuid.uuid4().hex[:8]}",
+            system_message="You are a financial transaction parser for Indian retail businesses."
+        ).with_model("anthropic", mapped_model)
+
+        file_contents = []
+        if image_bytes:
+            img_b64 = base64.b64encode(image_bytes).decode('utf-8')
+            file_contents = [ImageContent(image_base64=img_b64)]
+
+        user_msg = UserMessage(text=prompt, file_contents=file_contents)
+        return await chat.send_message(user_msg)
+
+    for attempt in range(retries):
+        try:
+            # Run async call from sync context
+            try:
+                asyncio.get_running_loop()
+                # Inside an event loop — use a thread
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    result = pool.submit(asyncio.run, _async_call()).result()
+            except RuntimeError:
+                # No running loop — safe to use asyncio.run directly
+                result = asyncio.run(_async_call())
+            return result
+        except Exception as e:
+            err = str(e)
+            if attempt < retries - 1:
+                # Model not found → try fallback
+                if 'not found' in err.lower() or 'model' in err.lower():
+                    if model == _VISION_MODEL and model != _VISION_FALLBACK:
+                        print(f'Model {model} not found — falling back to {_VISION_FALLBACK}')
+                        return _call_claude_emergent(_VISION_FALLBACK, prompt, image_bytes, image_mime, retries=retries)
+                wait = 10 * (2 ** attempt)
+                print(f'Emergent LLM error ({err[:80]}) — retrying in {wait}s')
+                time.sleep(wait)
+            else:
+                raise
+
+
+def _call_claude_sdk(model: str, prompt: str,
+                     image_bytes: bytes = None, image_mime: str = None,
+                     use_thinking: bool = False,
+                     retries: int = 3) -> str:
+    """Call Claude via standard Anthropic SDK (direct API key)."""
     if image_bytes:
         content = [
             {
