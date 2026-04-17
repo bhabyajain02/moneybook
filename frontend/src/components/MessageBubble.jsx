@@ -11,6 +11,14 @@ import PhotoReviewCard from './PhotoReviewCard.jsx'
 import { deleteTransaction } from '../api.js'
 import { t } from '../translations.js'
 
+// Normalize legacy /uploads/ paths to /api/uploads/ for production routing
+function normalizeImageUrl(url) {
+  if (!url) return url
+  if (url.startsWith('blob:')) return url
+  if (url.startsWith('/uploads/')) return '/api' + url
+  return url
+}
+
 // ── Inline formatting ──────────────────────────────────────────
 function formatText(text) {
   if (!text) return null
@@ -195,8 +203,8 @@ export default function MessageBubble({ msg, phone, onConfirm, onCancel, onPendi
       <div className="bubble">
         {/* Image attachment — hidden when PhotoReviewCard is shown (it has its own thumbnail) */}
         {media_url && !showPhotoReview && (
-          <img src={media_url} alt="attachment" className="bubble-image"
-               onClick={() => window.open(media_url, '_blank')} />
+          <img src={normalizeImageUrl(media_url)} alt="attachment" className="bubble-image"
+               onClick={() => window.open(normalizeImageUrl(media_url), '_blank')} />
         )}
 
         {/* Plain text — hidden when any card is shown */}

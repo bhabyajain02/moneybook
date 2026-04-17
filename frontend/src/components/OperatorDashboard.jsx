@@ -10,6 +10,13 @@ const BASE = '/api'
 
 /* ── Helpers ─────────────────────────────────────────── */
 
+// Normalize legacy /uploads/ paths to /api/uploads/ for production routing
+function normalizeImageUrl(url) {
+  if (!url) return url
+  if (url.startsWith('/uploads/')) return '/api' + url
+  return url
+}
+
 function timeAgo(iso) {
   if (!iso) return ''
   const diff = (Date.now() - new Date(iso).getTime()) / 1000
@@ -403,7 +410,7 @@ export default function OperatorDashboard() {
   }
 
   /* ── Image path ────────────────────────────────────── */
-  const imageSrc = selected?.image_path || null
+  const imageSrc = normalizeImageUrl(selected?.image_path || null)
 
   /* ── Render ────────────────────────────────────────── */
 
@@ -524,7 +531,7 @@ export default function OperatorDashboard() {
                   {item.image_path && (
                     <img
                       className="operator-thumb"
-                      src={item.image_path}
+                      src={normalizeImageUrl(item.image_path)}
                       alt=""
                     />
                   )}

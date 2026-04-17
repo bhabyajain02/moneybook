@@ -10,7 +10,7 @@ import sys
 from datetime import datetime, date
 
 class MoneyBookAPITester:
-    def __init__(self, base_url="https://c9227fc0-8526-4a59-b430-d3ca52acbbe0.preview.emergentagent.com"):
+    def __init__(self, base_url="https://app-runner-99.preview.emergentagent.com"):
         self.base_url = base_url
         self.tests_run = 0
         self.tests_passed = 0
@@ -137,6 +137,86 @@ class MoneyBookAPITester:
             params={"phone": f"web:+91{self.test_phone}"}
         )
 
+    def test_image_upload_api(self):
+        """Test image upload API and verify media_url format"""
+        self.log("🔍 Testing Image Upload API...")
+        try:
+            # Create a simple test image file
+            import io
+            from PIL import Image
+            
+            # Create a small test image
+            img = Image.new('RGB', (100, 100), color='red')
+            img_bytes = io.BytesIO()
+            img.save(img_bytes, format='JPEG')
+            img_bytes.seek(0)
+            
+            # Prepare multipart form data
+            files = {
+                'file': ('test_image.jpg', img_bytes, 'image/jpeg')
+            }
+            data = {
+                'phone': f"web:+91{self.test_phone}",
+                'language': 'hinglish'
+            }
+            
+            url = f"{self.base_url}/api/image"
+            response = requests.post(url, files=files, data=data)
+            
+            self.tests_run += 1
+            if response.status_code == 200:
+                result = response.json()
+                media_url = result.get('media_url', '')
+                
+                # Check if media_url has /api/uploads/ prefix
+                if media_url.startswith('/api/uploads/'):
+                    self.tests_passed += 1
+                    self.log("✅ Image Upload API - Success")
+                    self.log(f"   Media URL: {media_url}")
+                    return True, media_url
+                else:
+                    self.log(f"❌ Image Upload API - Wrong media_url format: {media_url}")
+                    return False, None
+            else:
+                self.log(f"❌ Image Upload API - Status: {response.status_code}")
+                try:
+                    error_data = response.json()
+                    self.log(f"   Error: {error_data}")
+                except:
+                    self.log(f"   Response: {response.text[:200]}")
+                return False, None
+                
+        except Exception as e:
+            self.log(f"❌ Image Upload API - Error: {str(e)}")
+            return False, None
+
+    def test_image_accessibility(self, media_url):
+        """Test if uploaded image is accessible via external URL"""
+        if not media_url:
+            return False
+            
+        self.log("🔍 Testing Image Accessibility...")
+        try:
+            # Test accessing the image via external URL
+            image_url = f"{self.base_url}{media_url}"
+            response = requests.get(image_url)
+            
+            self.tests_run += 1
+            if response.status_code == 200 and response.headers.get('content-type', '').startswith('image/'):
+                self.tests_passed += 1
+                self.log("✅ Image Accessibility - Success")
+                self.log(f"   Image URL: {image_url}")
+                self.log(f"   Content-Type: {response.headers.get('content-type')}")
+                return True
+            else:
+                self.log(f"❌ Image Accessibility - Status: {response.status_code}")
+                self.log(f"   Content-Type: {response.headers.get('content-type')}")
+                return False
+                
+        except Exception as e:
+            self.log(f"❌ Image Accessibility - Error: {str(e)}")
+            return False
+
     def test_cors_headers(self):
         """Test CORS headers in API responses"""
         self.log("🔍 Testing CORS Headers...")
@@ -183,6 +263,17 @@ class MoneyBookAPITester:
             results['profile'] = self.test_profile_api()[0]
             results['analytics'] = self.test_analytics_api()[0]
             results['dues'] = self.test_dues_api()[0]
+            
+            # Test image upload functionality
+            upload_success, media_url = self.test_image_upload_api()
+            results['image_upload'] = upload_success
+            
+            # Test image accessibility if upload succeeded
+            if upload_success and media_url:
+                results['image_accessibility'] = self.test_image_accessibility(media_url)
+            else:
+                results['image_accessibility'] = False
+                
         else:
             self.log("⚠️ Skipping dependent tests due to login failure")
             results.update({
@@ -190,7 +281,9 @@ class MoneyBookAPITester:
                 'send_message': False, 
                 'profile': False,
                 'analytics': False,
-                'dues': False
+                'dues': False,
+                'image_upload': False,
+                'image_accessibility': False
             })
         
         # Test CORS headers

@@ -965,7 +965,7 @@ async def api_send_image(
     contents = await file.read()
     filepath.write_bytes(contents)
 
-    media_url = f"/uploads/{filename}"
+    media_url = f"/api/uploads/{filename}"
 
     # Image quality check
     quality_ok, quality_reason = check_image_quality(str(filepath))
@@ -2167,7 +2167,7 @@ async def admin_poll_queue(request: Request, since: str = None):
 # ── Serve uploaded images ──────────────────────────────────────
 _uploads_dir = Path(__file__).parent.parent / '.tmp' / 'uploads'
 _uploads_dir.mkdir(parents=True, exist_ok=True)
-app.mount('/uploads', StaticFiles(directory=str(_uploads_dir)), name='uploads')
+app.mount('/api/uploads', StaticFiles(directory=str(_uploads_dir)), name='uploads')
 
 # ── Serve React webapp (MUST be last — catches all remaining routes) ──
 _webapp_dist = Path(__file__).parent.parent / 'frontend' / 'dist'
