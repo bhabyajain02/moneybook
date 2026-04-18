@@ -30,3 +30,12 @@ webapp/.vite/
 # Knowledge doc visuals (large generated files)
 docs/knowledge/**/visuals/*.mp4
 docs/knowledge/**/visuals/*.avi
+-e 
+# Environment and credential files
+.env
+.env.*
+*.env
+credentials.json
+*.pem
+*.key
+.credentials
