@@ -84,6 +84,10 @@ NOTIFY_EMAIL_FROM     = os.getenv('NOTIFY_EMAIL_FROM', '')     # Gmail address u
 NOTIFY_EMAIL_PASSWORD = os.getenv('NOTIFY_EMAIL_PASSWORD', '') # Gmail App Password
 NOTIFY_SMTP_HOST      = os.getenv('NOTIFY_SMTP_HOST', 'smtp.gmail.com')
 NOTIFY_SMTP_PORT      = int(os.getenv('NOTIFY_SMTP_PORT', '587'))
+# Base URL of the app — used in email links.
+# Local dev: leave unset (auto-detects http://localhost:8000)
+# Production: set to your public domain, e.g. https://moneybook.yourdomain.com
+APP_BASE_URL          = os.getenv('APP_BASE_URL', '').rstrip('/')
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger('moneybook')
@@ -108,6 +112,13 @@ def _send_fardi_email(store_name: str, store_phone: str, queue_id: int, queue_le
     now_ist = datetime.now(ist).strftime('%d %b %Y, %I:%M %p IST')
 
     recipients = [r.strip() for r in NOTIFY_EMAIL_TO.split(',') if r.strip()]
+
+    # Build the admin panel URL:
+    # - Production: use APP_BASE_URL from .env (e.g. https://moneybook.yourdomain.com)
+    # - Local dev:  fall back to http://localhost:8000 (FastAPI serves the built frontend)
+    # Operator dashboard is a hash route: /#admin (not a path like /operator)
+    base = APP_BASE_URL if APP_BASE_URL else 'http://localhost:8000'
+    admin_url = f"{base}/#admin"
 
     subject = f"📒 New Fardi — {store_name or store_phone}"
 
@@ -142,7 +153,7 @@ def _send_fardi_email(store_name: str, store_phone: str, queue_id: int, queue_le
           </tr>
         </table>
         <div style="margin-top: 18px; text-align: center;">
-          <a href="http://localhost:5173/operator"
+          <a href="{admin_url}"
              style="background: #1a73e8; color: #fff; padding: 10px 24px; border-radius: 6px;
                     text-decoration: none; font-size: 14px; font-weight: bold; display: inline-block;">
             Open Admin Panel →

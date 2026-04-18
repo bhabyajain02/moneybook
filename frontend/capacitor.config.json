@@ -1,6 +1,6 @@
 {
-  "appId": "com.moneybook.app",
-  "appName": "MoneyBook",
+  "appId": "com.snaphisab.app",
+  "appName": "SnapHisab",
   "webDir": "dist",
   "server": {
     "androidScheme": "https",
