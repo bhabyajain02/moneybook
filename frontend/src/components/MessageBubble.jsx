@@ -38,7 +38,12 @@ function formatText(text) {
 }
 
 function formatTime(iso) {
-  const d = new Date(iso)
+  if (!iso) return ''
+  // Server timestamps come as "YYYY-MM-DD HH:MM:SS" with no timezone marker (they are UTC).
+  // Without a marker, browsers treat the string as *local* time — causing an IST offset error.
+  // Normalise: replace the space separator with T and append Z so the browser always reads UTC.
+  const normalized = /Z|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : iso.replace(' ', 'T') + 'Z'
+  const d = new Date(normalized)
   return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true })
 }
 

@@ -3,7 +3,7 @@ import {
   adminGetQueue, adminPickQueue, adminCompleteQueue,
   adminRejectQueue, adminGetStats, adminPollQueue,
   adminLogin, adminVerifyToken, adminLogout,
-  adminGetDescriptions,
+  adminGetDescriptions, adminGetPrefill,
 } from '../api.js'
 
 const BASE = '/api'
@@ -85,6 +85,7 @@ export default function OperatorDashboard() {
   const [stats, setStats]             = useState({})
   const [loading, setLoading]         = useState(false)
   const [saving, setSaving]           = useState(false)
+  const [prefillLoading, setPrefillLoading] = useState(false)
 
   /* Form state */
   const [date, setDate]               = useState(todayStr())
@@ -94,8 +95,9 @@ export default function OperatorDashboard() {
   const [typeDescriptions, setTypeDescriptions] = useState({})
   const [typeTags, setTypeTags] = useState({})
 
-  const prevCountRef = useRef(0)
-  const formRef = useRef(null)
+  const prevCountRef   = useRef(0)
+  const formRef        = useRef(null)
+  const prefillPollRef = useRef(null)  // holds the setInterval ID for prefill polling
 
   /* ── Verify token on mount ─────────────────────────── */
   useEffect(() => {
@@ -177,11 +179,67 @@ export default function OperatorDashboard() {
     return () => { clearInterval(qInt); clearInterval(sInt) }
   }, [refreshQueue, refreshStats])
 
+  /* ── Apply prefill data to the form ────────────────── */
+  function applyPrefill(prefill) {
+    const inEntries = (prefill.in || prefill.jama || []).map(e => ({
+      desc: e.description || e.desc || '',
+      amount: String(e.amount || ''),
+      type: e.type || 'sale',
+      person: e.person || e.person_name || '',
+      tag: e.tag || '',
+      confidence: e.confidence || null,
+    }))
+    const outEntries = (prefill.out || prefill.naam || []).map(e => ({
+      desc: e.description || e.desc || '',
+      amount: String(e.amount || ''),
+      type: e.type || 'expense',
+      person: e.person || e.person_name || '',
+      tag: e.tag || '',
+      confidence: e.confidence || null,
+    }))
+    setInRows(inEntries.length ? inEntries : [EMPTY_ROW()])
+    setOutRows(outEntries.length ? outEntries : [EMPTY_ROW()])
+    if (prefill.date) setDate(prefill.date)
+    else setDate(todayStr())
+  }
+
+  /* ── Poll for prefill when AI is still processing ───── */
+  function startPrefillPoll(queueId) {
+    if (prefillPollRef.current) clearInterval(prefillPollRef.current)
+    setPrefillLoading(true)
+    let attempts = 0
+    const MAX_ATTEMPTS = 10  // 10 × 3s = 30s max
+    prefillPollRef.current = setInterval(async () => {
+      attempts++
+      try {
+        const data = await adminGetPrefill(queueId)
+        if (data.ready) {
+          clearInterval(prefillPollRef.current)
+          prefillPollRef.current = null
+          setPrefillLoading(false)
+          if (data.ai_prefill) applyPrefill(data.ai_prefill)
+          return
+        }
+      } catch { /* silent — keep polling */ }
+      if (attempts >= MAX_ATTEMPTS) {
+        clearInterval(prefillPollRef.current)
+        prefillPollRef.current = null
+        setPrefillLoading(false)
+      }
+    }, 3000)
+  }
+
   /* ── Select / pick a queue item ────────────────────── */
   async function handleSelect(item) {
     if (loading) return
     setLoading(true)
     setRotation(0)
+    // Cancel any in-flight prefill poll from a previous item
+    if (prefillPollRef.current) {
+      clearInterval(prefillPollRef.current)
+      prefillPollRef.current = null
+      setPrefillLoading(false)
+    }
     try {
       const picked = await adminPickQueue(item.id || item.queue_id, operator ? String(operator.id) : 'default')
       setSelected({ ...item, ...picked })
@@ -190,32 +248,15 @@ export default function OperatorDashboard() {
       // Populate form from AI prefill if available
       const prefill = picked.ai_prefill || item.ai_prefill
       console.log('[OperatorDash] picked response:', JSON.stringify(picked).slice(0, 500))
-      console.log('[OperatorDash] prefill:', prefill ? `IN=${(prefill.in||[]).length}, OUT=${(prefill.out||[]).length}` : 'NONE')
+      console.log('[OperatorDash] prefill:', prefill ? `IN=${(prefill.in||[]).length}, OUT=${(prefill.out||[]).length}` : 'NONE (will poll)')
       if (prefill) {
-        const inEntries = (prefill.in || prefill.jama || []).map(e => ({
-          desc: e.description || e.desc || '',
-          amount: String(e.amount || ''),
-          type: e.type || 'sale',
-          person: e.person || e.person_name || '',
-          tag: e.tag || '',
-          confidence: e.confidence || null,
-        }))
-        const outEntries = (prefill.out || prefill.naam || []).map(e => ({
-          desc: e.description || e.desc || '',
-          amount: String(e.amount || ''),
-          type: e.type || 'expense',
-          person: e.person || e.person_name || '',
-          tag: e.tag || '',
-          confidence: e.confidence || null,
-        }))
-        setInRows(inEntries.length ? inEntries : [EMPTY_ROW()])
-        setOutRows(outEntries.length ? outEntries : [EMPTY_ROW()])
-        if (prefill.date) setDate(prefill.date)
-        else setDate(todayStr())
+        applyPrefill(prefill)
       } else {
+        // Prefill not ready yet — clear form and poll every 3s until AI finishes
         setInRows([EMPTY_ROW()])
         setOutRows([EMPTY_ROW()])
         setDate(todayStr())
+        startPrefillPoll(item.id || item.queue_id)
       }
       // Fetch existing descriptions for grouping
       const storeId = picked.store_id || item.store_id
@@ -587,6 +628,11 @@ export default function OperatorDashboard() {
                       onChange={e => setDate(e.target.value)}
                     />
                   </label>
+                  {prefillLoading && (
+                    <span style={{ marginLeft: 12, fontSize: 13, color: '#888', fontStyle: 'italic' }}>
+                      ⏳ AI filling entries…
+                    </span>
+                  )}
                 </div>
 
                 <div className="operator-columns">

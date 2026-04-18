@@ -303,6 +303,13 @@ export async function adminPickQueue(queueId, operatorId = 'default') {
   return safeJson(r)
 }
 
+export async function adminGetPrefill(queueId) {
+  const r = await fetch(`${BASE}/admin/queue/${queueId}/prefill`, {
+    headers: getAdminHeaders()
+  })
+  return safeJson(r)
+}
+
 export async function adminCompleteQueue(queueId, data) {
   const r = await fetch(`${BASE}/admin/queue/${queueId}/complete`, {
     method: 'POST', headers: getAdminHeaders(), body: JSON.stringify(data)

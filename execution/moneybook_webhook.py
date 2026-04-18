@@ -78,8 +78,97 @@ TWILIO_WHATSAPP_NUMBER = os.getenv('TWILIO_WHATSAPP_NUMBER', 'whatsapp:+14155238
 
 twilio = TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
+# ── Email notification config ──────────────────────────────────────────────
+NOTIFY_EMAIL_TO       = os.getenv('NOTIFY_EMAIL_TO', '')       # recipient(s), comma-separated
+NOTIFY_EMAIL_FROM     = os.getenv('NOTIFY_EMAIL_FROM', '')     # Gmail address used to send
+NOTIFY_EMAIL_PASSWORD = os.getenv('NOTIFY_EMAIL_PASSWORD', '') # Gmail App Password
+NOTIFY_SMTP_HOST      = os.getenv('NOTIFY_SMTP_HOST', 'smtp.gmail.com')
+NOTIFY_SMTP_PORT      = int(os.getenv('NOTIFY_SMTP_PORT', '587'))
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger('moneybook')
+
+
+def _send_fardi_email(store_name: str, store_phone: str, queue_id: int, queue_len: int):
+    """
+    Send an email notification when a new fardi is uploaded to the operator queue.
+    Runs in a background thread — never blocks the upload response.
+    Silently skips if email is not configured.
+    """
+    if not (NOTIFY_EMAIL_TO and NOTIFY_EMAIL_FROM and NOTIFY_EMAIL_PASSWORD):
+        return  # Email not configured — skip silently
+
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+    from datetime import datetime, timezone, timedelta
+
+    # Display time in IST
+    ist = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(ist).strftime('%d %b %Y, %I:%M %p IST')
+
+    recipients = [r.strip() for r in NOTIFY_EMAIL_TO.split(',') if r.strip()]
+
+    subject = f"📒 New Fardi — {store_name or store_phone}"
+
+    html_body = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto;">
+      <div style="background: #1a73e8; padding: 16px 24px; border-radius: 8px 8px 0 0;">
+        <h2 style="color: #fff; margin: 0; font-size: 18px;">📒 New Fardi Uploaded</h2>
+      </div>
+      <div style="background: #f8f9fa; padding: 20px 24px; border: 1px solid #e0e0e0; border-top: none; border-radius: 0 0 8px 8px;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+          <tr>
+            <td style="padding: 6px 0; color: #555; width: 110px;">Store</td>
+            <td style="padding: 6px 0; font-weight: bold; color: #222;">{store_name or '—'}</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #555;">Phone</td>
+            <td style="padding: 6px 0; color: #222;">{store_phone}</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #555;">Queue #</td>
+            <td style="padding: 6px 0; color: #222;">#{queue_id}</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #555;">Time</td>
+            <td style="padding: 6px 0; color: #222;">{now_ist}</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #555;">Queue size</td>
+            <td style="padding: 6px 0; color: #{'d32f2f' if queue_len > 3 else '1a73e8'}; font-weight: bold;">
+              {queue_len} item{'s' if queue_len != 1 else ''} pending
+            </td>
+          </tr>
+        </table>
+        <div style="margin-top: 18px; text-align: center;">
+          <a href="http://localhost:5173/operator"
+             style="background: #1a73e8; color: #fff; padding: 10px 24px; border-radius: 6px;
+                    text-decoration: none; font-size: 14px; font-weight: bold; display: inline-block;">
+            Open Admin Panel →
+          </a>
+        </div>
+      </div>
+      <p style="text-align: center; font-size: 11px; color: #aaa; margin-top: 10px;">SnapHisab Operator Alerts</p>
+    </div>
+    """
+
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = subject
+        msg['From']    = f"SnapHisab <{NOTIFY_EMAIL_FROM}>"
+        msg['To']      = ', '.join(recipients)
+        msg.attach(MIMEText(html_body, 'html'))
+
+        with smtplib.SMTP(NOTIFY_SMTP_HOST, NOTIFY_SMTP_PORT) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(NOTIFY_EMAIL_FROM, NOTIFY_EMAIL_PASSWORD)
+            server.sendmail(NOTIFY_EMAIL_FROM, recipients, msg.as_string())
+
+        log.info(f"Email notification sent for queue {queue_id} → {recipients}")
+    except Exception as e:
+        log.error(f"Email notification failed for queue {queue_id}: {e}")
 
 app = FastAPI(title='MoneyBook', version='2.0')
 
@@ -991,6 +1080,17 @@ async def api_send_image(
     background_tasks.add_task(
         _shadow_parse_image, sid, queue_id, str(filepath),
         file.content_type or 'image/jpeg', language
+    )
+
+    # Background: email notification to operator
+    from moneybook_db import get_operator_queue as _get_q
+    pending_count = len(_get_q('pending') or []) + len(_get_q('in_progress') or [])
+    background_tasks.add_task(
+        _send_fardi_email,
+        store.get('name', ''),
+        store.get('phone', ''),
+        queue_id,
+        pending_count,
     )
 
     return {
@@ -2053,6 +2153,46 @@ async def admin_pick_queue(request: Request, queue_id: int, operator_id: str = '
     return {'status': 'picked', 'ai_prefill': ai_prefill}
 
 
+@app.get('/api/admin/queue/{queue_id}/prefill')
+async def admin_get_prefill(request: Request, queue_id: int):
+    """
+    Poll for AI prefill without changing queue status.
+    Frontend calls this every few seconds after pick() returns ai_prefill=null,
+    waiting for the background shadow parse to finish.
+    Returns {ready: bool, ai_prefill: dict|null}.
+    """
+    verify_admin_token(request)
+    shadow = get_shadow_parse_for_queue(queue_id)
+    if not shadow or not shadow.get('ai_output'):
+        return {'ready': False, 'ai_prefill': None}
+    try:
+        parsed = json.loads(shadow['ai_output'])
+        if 'error' in parsed and 'transactions' not in parsed:
+            # Shadow parse failed — stop polling, let operator fill manually
+            return {'ready': True, 'ai_prefill': None}
+        txns = parsed.get('transactions', [])
+        in_entries, out_entries = [], []
+        for t in txns:
+            entry = {
+                'description': t.get('description', ''),
+                'amount': t.get('amount', 0),
+                'type': t.get('type', ''),
+                'person': t.get('person_name', ''),
+                'tag': t.get('tag', ''),
+                'confidence': t.get('confidence', None),
+            }
+            col = t.get('column', '')
+            if col == 'out' or t.get('type') in ('expense', 'dues_given', 'bank_deposit'):
+                out_entries.append(entry)
+            else:
+                in_entries.append(entry)
+        ai_prefill = {'in': in_entries, 'out': out_entries, 'date': parsed.get('date')}
+        return {'ready': True, 'ai_prefill': ai_prefill}
+    except Exception as e:
+        log.error(f"Prefill poll failed for queue {queue_id}: {e}")
+        return {'ready': True, 'ai_prefill': None}
+
+
 @app.post('/api/admin/queue/{queue_id}/complete')
 async def admin_complete_queue(request: Request, queue_id: int, body: dict = Body(...)):
     """Operator saves entries. Saves to transactions table, notifies user."""
@@ -2108,10 +2248,26 @@ async def admin_complete_queue(request: Request, queue_id: int, body: dict = Bod
     except Exception as e:
         log.error(f"AI scoring failed for queue {queue_id}: {e}")
 
-    # Notify user via web message
+    # Notify user via web message — show the full "fardi" (detailed entry card)
+    # so the user can see every entry that was saved, not just a count.
     count = len(transactions)
-    save_web_message(store_id, 'bot',
-                     f"✅ {count} entr{'ies' if count != 1 else 'y'} saved from your photo!")
+    if count > 0:
+        # Reuse the same formatter that builds the pre-save confirmation card.
+        # Prefix with a ✅ saved header so the user still gets the success signal.
+        fardi = format_pending_confirmation(transactions, txn_date)
+        # Strip the trailing "haan / galat / cancel" prompt — entries are already saved.
+        fardi_lines = fardi.split('\n')
+        if fardi_lines and fardi_lines[-1].strip().startswith('✅'):
+            fardi_lines = fardi_lines[:-1]
+        # Also drop the blank separator line that preceded the prompt, if present.
+        while fardi_lines and not fardi_lines[-1].strip():
+            fardi_lines = fardi_lines[:-1]
+        fardi_body = '\n'.join(fardi_lines)
+        header = f"✅ *{count} entr{'ies' if count != 1 else 'y'} saved from your photo!*\n\n"
+        save_web_message(store_id, 'bot', header + fardi_body)
+    else:
+        save_web_message(store_id, 'bot',
+                         "✅ Photo processed — no entries to save.")
 
     resp = {
         'status': 'completed',

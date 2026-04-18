@@ -63,7 +63,9 @@ function groupByDate(messages) {
   const groups = []
   let lastDate = null
   messages.forEach(m => {
-    const d = new Date(m.created_at).toLocaleDateString('en-IN', {
+    const rawTs = m.created_at || ''
+    const normTs = /Z|[+-]\d{2}:?\d{2}$/.test(rawTs) ? rawTs : rawTs.replace(' ', 'T') + 'Z'
+    const d = new Date(normTs).toLocaleDateString('en-IN', {
       day: 'numeric', month: 'long', year: 'numeric'
     })
     if (d !== lastDate) {
