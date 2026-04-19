@@ -27,13 +27,14 @@ from typing import Optional
 from dotenv import load_dotenv
 from pathlib import Path
 from pymongo import MongoClient, ASCENDING, DESCENDING, ReturnDocument
+import certifi
 
 load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / '.env', override=False)
 
 MONGO_URL = os.environ.get('MONGO_URL', 'mongodb://localhost:27017')
 DB_NAME = os.environ.get('DB_NAME', 'moneybook')
 
-_client = MongoClient(MONGO_URL)
+_client = MongoClient(MONGO_URL, tls=True, tlsCAFile=certifi.where())
 db = _client[DB_NAME]
 
 
