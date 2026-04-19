@@ -25,7 +25,6 @@ dnspython==2.8.0
 docstring_parser==0.18.0
 ecdsa==0.19.2
 email-validator==2.3.0
-fastapi==0.110.1
 fastuuid==0.14.0
 filelock==3.25.2
 flake8==7.3.0
@@ -135,30 +134,10 @@ zipp==3.23.0
 
 # Web server
 fastapi==0.115.0
-uvicorn[standard]==0.30.6
-
-# WhatsApp / SMS
-twilio==9.3.5
-
-# AI parsing (text + image)
-google-generativeai==0.8.3
-
-# Scheduling (daily summaries, udhaar alerts)
-apscheduler==3.10.4
 
 # Dashboard
 streamlit==1.39.0
-pandas==2.2.3
 plotly==5.24.1
-
-# HTTP client (for downloading images from Twilio)
-httpx==0.27.2
-
-# Image handling
-Pillow==10.4.0
-
-# Environment variables
-python-dotenv==1.0.1
 
 # Form parsing for FastAPI webhook
 python-multipart==0.0.12
