@@ -139,7 +139,4 @@ fastapi==0.115.0
 streamlit==1.39.0
 plotly==5.24.1
 
-# Form parsing for FastAPI webhook
-python-multipart==0.0.12
-
 pymongo[srv]
