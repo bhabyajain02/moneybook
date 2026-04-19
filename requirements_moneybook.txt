@@ -30,3 +30,5 @@ python-dotenv==1.0.1
 
 # Form parsing for FastAPI webhook
 python-multipart==0.0.12
+
+pymongo[srv]
