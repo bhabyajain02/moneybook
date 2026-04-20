@@ -6,16 +6,25 @@
      dismissed / overwritten → returns null (removed from view) */
 
 import { useState } from 'react'
+import { Capacitor } from '@capacitor/core'
 import ConfirmCard from './ConfirmCard.jsx'
 import PhotoReviewCard from './PhotoReviewCard.jsx'
 import { deleteTransaction } from '../api.js'
 import { t } from '../translations.js'
 
-// Normalize legacy /uploads/ paths to /api/uploads/ for production routing
+const BACKEND_URL = 'https://moneybook-1.onrender.com'
+
+// Normalize image URLs so they work on both web and native Android/iOS.
+// On web: relative paths like /api/uploads/x.jpg resolve against the current domain — fine.
+// On native (Capacitor): the app has no "current domain", so relative paths break.
+//   → We must prefix them with the absolute backend URL.
 function normalizeImageUrl(url) {
   if (!url) return url
   if (url.startsWith('blob:')) return url
-  if (url.startsWith('/uploads/')) return '/api' + url
+  if (url.startsWith('/uploads/')) url = '/api' + url   // legacy path fix
+  if (url.startsWith('/') && Capacitor.isNativePlatform()) {
+    return BACKEND_URL + url   // make absolute for Android/iOS
+  }
   return url
 }
 

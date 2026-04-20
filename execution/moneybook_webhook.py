@@ -85,9 +85,9 @@ NOTIFY_EMAIL_PASSWORD = os.getenv('NOTIFY_EMAIL_PASSWORD', '') # Gmail App Passw
 NOTIFY_SMTP_HOST      = os.getenv('NOTIFY_SMTP_HOST', 'smtp.gmail.com')
 NOTIFY_SMTP_PORT      = int(os.getenv('NOTIFY_SMTP_PORT', '587'))
 # Base URL of the app — used in email links.
-# Local dev: leave unset (auto-detects http://localhost:8000)
-# Production: set to your public domain, e.g. https://moneybook.yourdomain.com
-APP_BASE_URL          = os.getenv('APP_BASE_URL', '').rstrip('/')
+# Falls back to the Render URL so emails always work even if APP_BASE_URL
+# is not set as an env variable in the Render dashboard.
+APP_BASE_URL          = os.getenv('APP_BASE_URL', 'https://moneybook-1.onrender.com').rstrip('/')
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger('moneybook')
@@ -113,12 +113,10 @@ def _send_fardi_email(store_name: str, store_phone: str, queue_id: int, queue_le
 
     recipients = [r.strip() for r in NOTIFY_EMAIL_TO.split(',') if r.strip()]
 
-    # Build the admin panel URL:
-    # - Production: use APP_BASE_URL from .env (e.g. https://moneybook.yourdomain.com)
-    # - Local dev:  fall back to http://localhost:8000 (FastAPI serves the built frontend)
-    # Operator dashboard is a hash route: /#admin (not a path like /operator)
-    base = APP_BASE_URL if APP_BASE_URL else 'http://localhost:8000'
-    admin_url = f"{base}/#admin"
+    # Build the admin panel URL using the module-level APP_BASE_URL.
+    # APP_BASE_URL already defaults to the Render URL, so this always produces
+    # a correct link even when the env var is not explicitly set.
+    admin_url = f"{APP_BASE_URL}/#admin"
 
     subject = f"📒 New Fardi — {store_name or store_phone}"
 
