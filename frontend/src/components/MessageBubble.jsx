@@ -5,12 +5,71 @@
      confirmed_transactions → shows SavedCard (saved entries with delete)
      dismissed / overwritten → returns null (removed from view) */
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Capacitor } from '@capacitor/core'
 import ConfirmCard from './ConfirmCard.jsx'
 import PhotoReviewCard from './PhotoReviewCard.jsx'
 import { deleteTransaction } from '../api.js'
 import { t } from '../translations.js'
+
+// Duration to fill from 5% → 90% while reading (ms)
+const READING_DURATION_MS = 5 * 60 * 1000   // 5 minutes
+const READING_START_PCT   = 5
+const READING_CAP_PCT     = 90
+
+/** Parse a server timestamp. The backend uses datetime.utcnow().isoformat()
+ *  which emits naive ISO (no "Z"). Default Date.parse would treat that as
+ *  LOCAL time — causing a 5.5h offset in IST and breaking elapsed calc.
+ *  We append 'Z' when no timezone info is present. */
+function parseUtcIso(ts) {
+  if (!ts) return 0
+  let s = String(ts).replace(' ', 'T')
+  if (!/(Z|[+\-]\d\d:?\d\d)$/.test(s)) s += 'Z'
+  const p = Date.parse(s)
+  return isNaN(p) ? 0 : p
+}
+
+/** Smoothly interpolate reading progress over time so the bar feels like
+ *  it's actively reading. Server can still override (e.g. operator picks → 95). */
+function useSmoothProgress(msg) {
+  const meta = msg?.metadata || {}
+  const serverPct = typeof meta.progress === 'number' ? meta.progress : null
+  const createdAt = msg?.created_at
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    // Keep ticking until server signals completion (100%).
+    if (serverPct == null || serverPct >= 100) return
+    const id = setInterval(() => setNow(Date.now()), 2000)
+    return () => clearInterval(id)
+  }, [serverPct])
+
+  if (serverPct == null) return null
+
+  const startMs = parseUtcIso(createdAt)
+
+  // Time-based progress: 5 → 90 linearly over READING_DURATION_MS
+  let timePct = READING_START_PCT
+  if (startMs > 0) {
+    const elapsed = Math.max(0, now - startMs)
+    const frac = Math.min(1, elapsed / READING_DURATION_MS)
+    timePct = READING_START_PCT + frac * (READING_CAP_PCT - READING_START_PCT)
+  }
+
+  // Stay at time-based (capped 90%) until server signals completion → 100%.
+  let shown
+  if (serverPct >= 100) shown = 100
+  else                  shown = Math.max(serverPct, Math.min(READING_CAP_PCT, timePct))
+
+  // Single consistent label while in-flight: "Preparing your entries..."
+  let labelKey = shown >= 100 ? 'progress_completed' : 'progress_reading'
+  // If server provides a specific non-reading label (e.g. rejected), honor it
+  if (meta.progress_label && meta.progress_label !== 'reading' && meta.progress_label !== 'photo_received') {
+    labelKey = `progress_${meta.progress_label}`
+  }
+
+  return { progress: Math.round(shown), labelKey }
+}
 
 const BACKEND_URL = 'https://moneybook-1.onrender.com'
 
@@ -184,6 +243,10 @@ function SavedCard({ transactions: initialTxns, phone, language }) {
 export default function MessageBubble({ msg, phone, onConfirm, onCancel, onPendingEdit, onOpenLedger, language }) {
   const { direction, body, media_url, created_at, metadata } = msg
   const isUser = direction === 'user'
+  // Progress metadata lives on whichever message has it (currently the bot's
+  // "Photo received!" ack). Only animate when still in-flight (< 100%).
+  const hasProgress = typeof metadata?.progress === 'number' && metadata.progress < 100
+  const smoothProgress = useSmoothProgress(hasProgress ? msg : null)
 
   // Dismissed or overwritten → invisible (clean up chat)
   if (!isUser && (metadata?.dismissed || metadata?.overwritten)) return null
@@ -219,6 +282,64 @@ export default function MessageBubble({ msg, phone, onConfirm, onCancel, onPendi
         {media_url && !showPhotoReview && (
           <img src={normalizeImageUrl(media_url)} alt="Uploaded photo" className="bubble-image"
                onClick={() => window.open(normalizeImageUrl(media_url), '_blank')} />
+        )}
+
+        {/* "From photo #N" tag on saved-entries cards — lets user match the card to the bar */}
+        {!isUser && metadata?.saved_from_photo && metadata.queue_id && (
+          <div style={{
+            fontSize: 10,
+            color: '#888',
+            fontWeight: 600,
+            letterSpacing: 0.3,
+            marginBottom: 6,
+          }}>
+            📷 Photo #{metadata.queue_id}
+          </div>
+        )}
+
+        {/* Photo processing progress bar — rendered on the bot's "Photo received!"
+            message (or any message carrying progress metadata).
+            Smooth time-based interpolation: 5% → 90% over 5 min, then server overrides. */}
+        {smoothProgress && smoothProgress.progress < 100 && (
+          <div className="photo-progress" style={{ marginTop: 6 }}>
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              fontSize: 11,
+              color: '#546E7A',
+              marginBottom: 4,
+              fontWeight: 500,
+            }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <span className="reading-dot" style={{
+                  width: 6, height: 6, borderRadius: '50%',
+                  background: '#25D366',
+                  display: 'inline-block',
+                  animation: 'pulse 1.2s ease-in-out infinite',
+                }} />
+                {metadata?.queue_id && (
+                  <span style={{ color: '#1a1a1a', fontWeight: 700 }}>
+                    #{metadata.queue_id}
+                  </span>
+                )}
+                <span>{t(smoothProgress.labelKey, language)}</span>
+              </span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}>{smoothProgress.progress}%</span>
+            </div>
+            <div style={{
+              height: 5,
+              borderRadius: 3,
+              background: 'rgba(0,0,0,0.08)',
+              overflow: 'hidden',
+            }}>
+              <div style={{
+                width: `${smoothProgress.progress}%`,
+                height: '100%',
+                background: 'linear-gradient(90deg, #25D366 0%, #128C7E 100%)',
+                transition: 'width 1.2s linear',
+              }} />
+            </div>
+          </div>
         )}
 
         {/* Plain text — hidden when any card is shown */}

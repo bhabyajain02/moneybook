@@ -14,6 +14,13 @@
       "runtimeArgs": ["run", "dev", "--", "--port", "3000"],
       "cwd": "/Users/bhabya.jain/go/webapp",
       "port": 3000
+    },
+    {
+      "name": "demo",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "4444"],
+      "cwd": "/Users/bhabya.jain/go/marketing/demo",
+      "port": 4444
     }
   ]
 }

@@ -96,6 +96,8 @@ def init_db():
     db.ai_shadow_parses.create_index("queue_id")
     db.store_ai_config.create_index("store_id", unique=True)
     db.operator_users.create_index("username", unique=True)
+    db.otp_codes.create_index([("phone", ASCENDING), ("created_at", DESCENDING)])
+    db.otp_codes.create_index("expires_at")
 
     # Seed default admin operator if none exist
     if db.operator_users.count_documents({}) == 0:
@@ -603,12 +605,26 @@ def get_period_summary(store_id: int, start_date: str, end_date: str, label: str
     ]
     daily = list(db.transactions.aggregate(daily_pipeline))
 
+    # Sales tags — grouped by tag (fallback to 'uncategorized' when missing)
+    sales_tags_pipeline = [
+        {"$match": {**match, "type": "sale", "tag": {"$nin": [None, ""]}}},
+        {"$group": {"_id": "$tag", "total": {"$sum": "$amount"}}},
+        {"$sort": {"total": -1}}
+    ]
+    sales_tags_raw = list(db.transactions.aggregate(sales_tags_pipeline))
+    sales_uncat_pipeline = [
+        {"$match": {**match, "type": "sale", "$or": [{"tag": None}, {"tag": ""}]}},
+        {"$group": {"_id": "uncategorized", "total": {"$sum": "$amount"}}}
+    ]
+    sales_tags_raw.extend(list(db.transactions.aggregate(sales_uncat_pipeline)))
+
     return {
         'label': label,
         'start': start_date,
         'end': end_date,
         'summary': {r['_id']: r['total'] for r in agg},
         'expense_tags': {r['_id']: r['total'] for r in expense_tags_raw},
+        'sales_tags': {r['_id']: r['total'] for r in sales_tags_raw},
         'staff_expense_tags': {r['_id']: r['total'] for r in staff_expense_tags},
         'staff_expense': staff_expense_total,
         'operating_expense': op_expense_total,
@@ -772,6 +788,66 @@ def build_store_context(store_id: int) -> str:
 
 def get_recent_corrections(store_id: int, limit: int = 15) -> list:
     return get_corrections_by_scope('store', store_id=store_id, limit=limit)
+
+
+def get_sales_by_tag(store_id: int, start: str, end: str, tag: Optional[str] = None) -> list:
+    """Return individual sale transactions within a date range, optionally filtered by tag.
+
+    tag == 'uncategorized' → only sales with empty/null tag
+    tag == None or '' → ALL sales in the period (no tag filter)
+    tag == '<other>' → only sales with that exact tag
+    Returns list of {date, description, amount, person_name, tag, payment_mode} sorted by date DESC.
+    """
+    match = {"store_id": store_id, "type": "sale", "date": {"$gte": start, "$lte": end}}
+    if tag == 'uncategorized':
+        match["$or"] = [{"tag": None}, {"tag": ""}]
+    elif tag:
+        match["tag"] = tag
+    # else: no tag filter → return ALL sales
+
+    rows = list(db.transactions.find(match).sort([("date", -1), ("_id", -1)]))
+    return [{
+        'date':         r.get('date'),
+        'description':  r.get('description', '') or '',
+        'amount':       r.get('amount', 0) or 0,
+        'person_name':  r.get('person_name') or '',
+        'tag':          r.get('tag') or 'uncategorized',
+        'payment_mode': r.get('payment_mode') or '',
+    } for r in rows]
+
+
+def get_expenses_by_tags(store_id: int, start: str, end: str, tags: Optional[list] = None) -> list:
+    """Return individual expense transactions for the given tag(s) and date range.
+
+    tags == None or empty list → ALL expenses in period
+    tags == ['uncategorized'] → only expenses with empty/null tag
+    tags == [list of tag names] → expenses where tag is any of those
+    Returns same shape as get_sales_by_tag.
+    """
+    match = {"store_id": store_id, "type": "expense", "date": {"$gte": start, "$lte": end}}
+    if tags:
+        # Normalize tags — handle 'uncategorized' specially
+        has_uncat = 'uncategorized' in tags
+        real_tags = [t for t in tags if t and t != 'uncategorized']
+        conditions = []
+        if real_tags:
+            conditions.append({"tag": {"$in": real_tags}})
+        if has_uncat:
+            conditions.append({"$or": [{"tag": None}, {"tag": ""}]})
+        if len(conditions) == 1:
+            match.update(conditions[0])
+        elif len(conditions) > 1:
+            match["$or"] = conditions
+
+    rows = list(db.transactions.find(match).sort([("date", -1), ("_id", -1)]))
+    return [{
+        'date':         r.get('date'),
+        'description':  r.get('description', '') or '',
+        'amount':       r.get('amount', 0) or 0,
+        'person_name':  r.get('person_name') or '',
+        'tag':          r.get('tag') or 'uncategorized',
+        'payment_mode': r.get('payment_mode') or '',
+    } for r in rows]
 
 
 def get_store_expense_tags(store_id: int, limit: int = 15) -> list:
@@ -1381,6 +1457,74 @@ def update_message_metadata(msg_id: int, metadata) -> None:
     )
 
 
+def find_photo_message_by_queue(store_id: int, queue_id: int) -> Optional[dict]:
+    """Return the message (any direction) carrying progress metadata for this queue_id."""
+    rows = list(db.web_messages.find(
+        {"store_id": store_id},
+        {"_id": 0}
+    ).sort("id", DESCENDING).limit(40))
+    for r in rows:
+        raw = r.get('metadata')
+        if not raw:
+            continue
+        try:
+            meta = json.loads(raw)
+        except Exception:
+            continue
+        if isinstance(meta, dict) and meta.get('queue_id') == queue_id:
+            return r
+    return None
+
+
+def update_photo_progress(store_id: int, queue_id: int, progress: int, label: str) -> bool:
+    """Update progress/label on the user photo message tied to this queue_id.
+    Returns True if a message was updated, False if not found."""
+    msg = find_photo_message_by_queue(store_id, queue_id)
+    if not msg:
+        return False
+    raw = msg.get('metadata')
+    try:
+        meta = json.loads(raw) if raw else {}
+    except Exception:
+        meta = {}
+    meta['queue_id']       = queue_id
+    meta['progress']       = max(0, min(100, int(progress)))
+    meta['progress_label'] = label or ''
+    update_message_metadata(msg['id'], meta)
+    return True
+
+
+def get_in_progress_photo_messages(store_id: int, limit: int = 30) -> list:
+    """Return recent messages (any direction) that carry progress metadata —
+    both in-flight (progress < 100) AND recently completed (progress == 100)
+    so the frontend reliably sees the transition to 100% and can hide the bar.
+
+    Scope is naturally bounded by the `limit` (last N messages)."""
+    rows = list(db.web_messages.find(
+        {"store_id": store_id},
+        {"_id": 0}
+    ).sort("id", DESCENDING).limit(limit))
+
+    result = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d['quick_replies'] = json.loads(d.get('quick_replies') or '[]')
+        except Exception:
+            d['quick_replies'] = []
+        raw = d.get('metadata')
+        try:
+            meta = json.loads(raw) if raw else None
+        except Exception:
+            meta = None
+        d['metadata'] = meta
+        # Include any message with progress metadata, regardless of value.
+        # Client upsert logic handles no-ops cheaply (no re-render if unchanged).
+        if isinstance(meta, dict) and meta.get('progress') is not None:
+            result.append(d)
+    return result
+
+
 def delete_transaction(store_id: int, txn_id: int) -> bool:
     result = db.transactions.delete_one({"id": txn_id, "store_id": store_id})
     return result.deleted_count > 0
@@ -1611,6 +1755,117 @@ def list_operators():
         {"active": 1},
         {"_id": 0, "id": 1, "username": 1, "name": 1, "role": 1, "created_at": 1}
     ))
+
+
+# ─────────────────────────────────────────────────────────────────
+# OTP Authentication
+# ─────────────────────────────────────────────────────────────────
+
+OTP_TTL_SEC                 = 300     # 5 minutes for code validity
+OTP_VERIFIED_WINDOW_SEC     = 600     # 10 minutes — login valid after verify
+OTP_RATE_LIMIT_MAX          = 5       # max OTPs per window
+OTP_RATE_LIMIT_WINDOW_SEC   = 900     # 15 minutes
+OTP_MAX_ATTEMPTS            = 5       # max verify attempts per code
+
+
+def _utcnow():
+    """UTC naive datetime for consistent storage/comparison."""
+    from datetime import datetime
+    return datetime.utcnow()
+
+
+def count_recent_otps(phone: str, window_sec: int = OTP_RATE_LIMIT_WINDOW_SEC) -> int:
+    """Return number of OTPs requested for this phone within the window."""
+    from datetime import timedelta
+    since = _utcnow() - timedelta(seconds=window_sec)
+    return db.otp_codes.count_documents({
+        "phone": phone,
+        "created_at": {"$gte": since}
+    })
+
+
+def create_otp(phone: str, ip: Optional[str] = None) -> dict:
+    """Generate a fresh 6-digit OTP and persist it. Returns {code, expires_at}."""
+    import random
+    from datetime import timedelta
+
+    # Invalidate any existing un-verified codes for this phone
+    db.otp_codes.delete_many({"phone": phone, "verified": False})
+
+    code = f"{random.randint(0, 999999):06d}"
+    now  = _utcnow()
+    doc  = {
+        "phone":       phone,
+        "code":        code,
+        "created_at":  now,
+        "expires_at":  now + timedelta(seconds=OTP_TTL_SEC),
+        "attempts":    0,
+        "verified":    False,
+        "verified_at": None,
+        "ip":          ip or "",
+    }
+    db.otp_codes.insert_one(doc)
+    return {"code": code, "expires_at": doc["expires_at"]}
+
+
+def verify_otp_code(phone: str, code: str) -> tuple:
+    """Verify a submitted code against the latest OTP for the phone.
+
+    Returns (ok: bool, error_key: str).
+    error_key one of: '', 'no_otp', 'expired', 'too_many_attempts', 'invalid'
+    """
+    now = _utcnow()
+    rec = db.otp_codes.find_one(
+        {"phone": phone, "verified": False},
+        sort=[("created_at", -1)]
+    )
+    if not rec:
+        return False, 'no_otp'
+    if rec['expires_at'] < now:
+        return False, 'expired'
+    if rec.get('attempts', 0) >= OTP_MAX_ATTEMPTS:
+        return False, 'too_many_attempts'
+
+    # Bump attempts regardless of correctness
+    db.otp_codes.update_one({"_id": rec["_id"]}, {"$inc": {"attempts": 1}})
+
+    if str(code).strip() != rec['code']:
+        return False, 'invalid'
+
+    # Mark verified
+    db.otp_codes.update_one(
+        {"_id": rec["_id"]},
+        {"$set": {"verified": True, "verified_at": now}}
+    )
+    return True, ''
+
+
+def is_phone_recently_verified(phone: str, window_sec: int = OTP_VERIFIED_WINDOW_SEC) -> bool:
+    """True if this phone has a verified OTP within the last `window_sec`."""
+    from datetime import timedelta
+    since = _utcnow() - timedelta(seconds=window_sec)
+    return db.otp_codes.count_documents({
+        "phone":       phone,
+        "verified":    True,
+        "verified_at": {"$gte": since},
+    }) > 0
+
+
+def consume_phone_verification(phone: str) -> bool:
+    """Mark the most recent verified OTP for this phone as consumed so it cannot
+    be reused. Returns True if a fresh (un-consumed) verification was found."""
+    from datetime import timedelta
+    since = _utcnow() - timedelta(seconds=OTP_VERIFIED_WINDOW_SEC)
+    res = db.otp_codes.update_one(
+        {
+            "phone":       phone,
+            "verified":    True,
+            "verified_at": {"$gte": since},
+            "$or": [{"consumed": False}, {"consumed": {"$exists": False}}],
+        },
+        {"$set": {"consumed": True, "consumed_at": _utcnow()}}
+    )
+    return res.modified_count > 0
 
 
 def get_descriptions_by_type(store_id, txn_type, limit=30):

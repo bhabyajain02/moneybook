@@ -61,6 +61,12 @@ from moneybook_db import (
     get_store_ai_config, update_store_ai_config,
     verify_operator, get_operator_by_id, list_operators,
     get_descriptions_by_type, get_tags_by_type,
+    get_sales_by_tag, get_expenses_by_tags,
+    create_otp, verify_otp_code, count_recent_otps,
+    is_phone_recently_verified, consume_phone_verification,
+    OTP_RATE_LIMIT_MAX, OTP_TTL_SEC, OTP_RATE_LIMIT_WINDOW_SEC,
+    update_photo_progress, find_photo_message_by_queue,
+    get_in_progress_photo_messages,
 )
 from moneybook_parser import (
     parse_text_message, parse_image_message, parse_correction,
@@ -178,6 +184,76 @@ def _send_fardi_email(store_name: str, store_phone: str, queue_id: int, queue_le
         log.info(f"Email notification sent for queue {queue_id} → {recipients}")
     except Exception as e:
         log.error(f"Email notification failed for queue {queue_id}: {e}")
+
+def _send_login_email(store_name: str, store_phone: str, is_new_user: bool):
+    """Notify operators via email when a user logs in (OTP verified).
+    Runs in a background thread — never blocks the login response.
+    Silently skips if email is not configured."""
+    if not (NOTIFY_EMAIL_TO and NOTIFY_EMAIL_FROM and NOTIFY_EMAIL_PASSWORD):
+        return
+
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+    from datetime import datetime, timezone, timedelta
+
+    ist = timezone(timedelta(hours=5, minutes=30))
+    now_ist = datetime.now(ist).strftime('%d %b %Y, %I:%M %p IST')
+
+    recipients = [r.strip() for r in NOTIFY_EMAIL_TO.split(',') if r.strip()]
+
+    tag_text  = 'New signup' if is_new_user else 'Login'
+    tag_color = '#16A34A' if is_new_user else '#1a73e8'
+    subject   = f"🔐 SnapHisab {tag_text} — {store_name or store_phone}"
+
+    html_body = f"""
+    <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto;">
+      <div style="background: {tag_color}; padding: 16px 24px; border-radius: 8px 8px 0 0;">
+        <h2 style="color: #fff; margin: 0; font-size: 18px;">🔐 {tag_text}</h2>
+      </div>
+      <div style="background: #f8f9fa; padding: 20px 24px; border: 1px solid #e0e0e0;
+                  border-top: none; border-radius: 0 0 8px 8px;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+          <tr>
+            <td style="padding: 6px 0; color: #555; width: 110px;">Store</td>
+            <td style="padding: 6px 0; font-weight: bold; color: #222;">{store_name or '—'}</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #555;">Phone</td>
+            <td style="padding: 6px 0; color: #222;">{store_phone}</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #555;">Type</td>
+            <td style="padding: 6px 0; color: {tag_color}; font-weight: bold;">{tag_text}</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #555;">Time</td>
+            <td style="padding: 6px 0; color: #222;">{now_ist}</td>
+          </tr>
+        </table>
+      </div>
+      <p style="text-align: center; font-size: 11px; color: #aaa; margin-top: 10px;">
+        SnapHisab User Alerts
+      </p>
+    </div>
+    """
+
+    try:
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = subject
+        msg['From']    = f"SnapHisab <{NOTIFY_EMAIL_FROM}>"
+        msg['To']      = ', '.join(recipients)
+        msg.attach(MIMEText(html_body, 'html'))
+
+        with smtplib.SMTP(NOTIFY_SMTP_HOST, NOTIFY_SMTP_PORT) as server:
+            server.ehlo()
+            server.starttls()
+            server.login(NOTIFY_EMAIL_FROM, NOTIFY_EMAIL_PASSWORD)
+            server.sendmail(NOTIFY_EMAIL_FROM, recipients, msg.as_string())
+        log.info(f"Login email sent: {store_name or store_phone} ({'new' if is_new_user else 'returning'})")
+    except Exception as e:
+        log.error(f"Login email failed for {store_phone}: {e}")
+
 
 app = FastAPI(title='MoneyBook', version='2.0')
 
@@ -974,12 +1050,184 @@ async def api_check_phone(phone: str):
     return {'exists': False, 'name': '', 'phone': normalized}
 
 
-@app.post('/api/login')
-async def api_login(req: LoginRequest):
-    """Register or load a store by phone number. Returns store metadata.
-    Web login always advances straight to active — no segment question needed.
+# ─────────────────────────────────────────────────────────────────
+# OTP Authentication
+# ─────────────────────────────────────────────────────────────────
+
+TWILIO_VERIFY_SERVICE_SID = os.getenv('TWILIO_VERIFY_SERVICE_SID', '')
+OTP_DEV_MODE              = os.getenv('OTP_DEV_MODE', 'false').lower() == 'true'
+# "production" path = Twilio Verify enabled. Otherwise dev mode (local OTP + console logs).
+OTP_USE_VERIFY            = bool(TWILIO_VERIFY_SERVICE_SID) and not OTP_DEV_MODE
+
+
+def _phone_to_e164(canonical: str) -> str:
+    """Convert internal 'web:+91XXXXXXXXXX' → Twilio-friendly '+91XXXXXXXXXX'."""
+    return canonical.replace('web:', '')
+
+
+def _verify_send(to_e164: str) -> tuple:
+    """Ask Twilio Verify to send a code. Returns (ok: bool, error: str)."""
+    try:
+        twilio.verify.v2.services(TWILIO_VERIFY_SERVICE_SID).verifications.create(
+            to=to_e164, channel='sms'
+        )
+        logging.info(f"📤 Twilio Verify: SMS sent to {to_e164}")
+        return True, ''
+    except Exception as e:
+        logging.error(f"Twilio Verify send failed for {to_e164}: {e}")
+        return False, str(e)[:200]
+
+
+def _verify_check(to_e164: str, code: str) -> tuple:
+    """Check a code with Twilio Verify. Returns (ok: bool, status: str)."""
+    try:
+        result = twilio.verify.v2.services(TWILIO_VERIFY_SERVICE_SID).verification_checks.create(
+            to=to_e164, code=code
+        )
+        # result.status is one of: 'pending', 'approved', 'canceled', 'max_attempts_reached',
+        # 'deleted', 'failed', 'expired'
+        return result.status == 'approved', result.status
+    except Exception as e:
+        msg = str(e)
+        logging.error(f"Twilio Verify check failed for {to_e164}: {msg}")
+        # Twilio returns 404 "not found" when the verification has expired or was already consumed
+        if '404' in msg or 'not found' in msg.lower():
+            return False, 'expired'
+        return False, 'error'
+
+
+def _dev_log_otp(to_e164: str, code: str):
+    logging.info(f"📱 [OTP-DEV] SMS to {to_e164}: {code}")
+    print(f"\n📱 [OTP-DEV] SMS to {to_e164}: code = {code}\n", flush=True)
+
+
+class SendOtpRequest(BaseModel):
+    phone: str  # 10 digits or +91 form
+
+
+@app.post('/api/send-otp')
+async def api_send_otp(req: SendOtpRequest, request: Request):
+    """Send a 6-digit OTP. Rate-limited per phone.
+    - Production: Twilio Verify handles code generation, delivery, expiry.
+    - Dev mode: generates local code and prints to server console.
     """
     phone = _normalize_phone(req.phone)
+
+    # Rate limit — prevent abuse (tracked locally regardless of provider)
+    if count_recent_otps(phone) >= OTP_RATE_LIMIT_MAX:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many OTP requests. Please wait before trying again."
+        )
+
+    # Persist the request for rate-limit tracking (and for dev-mode code)
+    ip  = request.client.host if request.client else ''
+    otp = create_otp(phone, ip=ip)
+    to_e164 = _phone_to_e164(phone)
+
+    if OTP_USE_VERIFY:
+        ok, err = _verify_send(to_e164)
+        if not ok:
+            raise HTTPException(status_code=502, detail=f"Could not send OTP: {err}")
+    else:
+        _dev_log_otp(to_e164, otp['code'])
+
+    return {
+        'sent':       True,
+        'phone':      phone,
+        'expires_in': OTP_TTL_SEC,
+        'dev_mode':   not OTP_USE_VERIFY,
+        'provider':   'twilio_verify' if OTP_USE_VERIFY else 'local_dev',
+    }
+
+
+class VerifyOtpRequest(BaseModel):
+    phone: str
+    code:  str
+
+
+@app.post('/api/verify-otp')
+async def api_verify_otp(req: VerifyOtpRequest):
+    """Verify a 6-digit OTP. Must be called before /api/login."""
+    phone = _normalize_phone(req.phone)
+    code  = (req.code or '').strip()
+
+    if not code.isdigit() or len(code) != 6:
+        raise HTTPException(status_code=400, detail='OTP must be 6 digits')
+
+    if OTP_USE_VERIFY:
+        to_e164 = _phone_to_e164(phone)
+        ok, status = _verify_check(to_e164, code)
+        if not ok:
+            err_map = {
+                'expired':              'expired',
+                'max_attempts_reached': 'too_many_attempts',
+                'canceled':             'no_otp',
+                'pending':              'invalid',
+            }
+            err_key = err_map.get(status, 'invalid')
+            status_code = {
+                'expired':            410,
+                'too_many_attempts':  429,
+                'no_otp':             410,
+                'invalid':            401,
+            }[err_key]
+            raise HTTPException(status_code=status_code, detail=err_key)
+
+        # Mark this phone as verified locally so /api/login can proceed
+        from moneybook_db import db as _mdb
+        from datetime import datetime
+        now = datetime.utcnow()
+        _mdb.otp_codes.insert_one({
+            "phone":       phone,
+            "code":        "(twilio)",
+            "created_at":  now,
+            "expires_at":  now,
+            "attempts":    1,
+            "verified":    True,
+            "verified_at": now,
+            "consumed":    False,
+            "provider":    "twilio_verify",
+        })
+    else:
+        # Local / dev-mode code verification
+        ok, err_key = verify_otp_code(phone, code)
+        if not ok:
+            status_code = {
+                'no_otp':             410,
+                'expired':            410,
+                'too_many_attempts':  429,
+                'invalid':            401,
+            }.get(err_key, 400)
+            raise HTTPException(status_code=status_code, detail=err_key or 'verify failed')
+
+    return {'verified': True, 'phone': phone}
+
+
+# ─────────────────────────────────────────────────────────────────
+# Login (requires recent OTP verification)
+# ─────────────────────────────────────────────────────────────────
+
+@app.post('/api/login')
+async def api_login(req: LoginRequest, background_tasks: BackgroundTasks):
+    """Register or load a store by phone number. Returns store metadata.
+    Requires /api/verify-otp to have been called within the last 10 minutes.
+    Sends an operator email notification on successful login.
+    """
+    phone = _normalize_phone(req.phone)
+
+    # Gate: must have a recent verified OTP
+    if not is_phone_recently_verified(phone):
+        raise HTTPException(status_code=401, detail='phone_not_verified')
+
+    # Check if this is a first-time signup BEFORE we create/update the store
+    existing_before = get_store_by_phone(phone)
+    is_new_user = (
+        not existing_before
+        or not existing_before.get('name')
+        or existing_before.get('onboarding_state') in ('new', 'awaiting_name')
+    )
+
     store = get_or_create_store(phone)
     sid   = store['id']
 
@@ -992,6 +1240,17 @@ async def api_login(req: LoginRequest):
     elif store['onboarding_state'] == 'awaiting_segment':
         update_store(sid, onboarding_state='active')
         store = get_or_create_store(phone)
+
+    # Consume the verification — single-use
+    consume_phone_verification(phone)
+
+    # Fire operator email notification in background (never blocks login)
+    background_tasks.add_task(
+        _send_login_email,
+        store.get('name') or '',
+        phone,
+        is_new_user,
+    )
 
     return {
         'phone':            phone,
@@ -1076,14 +1335,25 @@ async def api_send_image(
                          f"⚠️ Photo quality issue ({quality_reason}). Please resend a clearer photo.")
         return {'media_url': media_url, 'quality_ok': False, 'reason': quality_reason}
 
-    # Save user message (image)
-    user_msg_id = save_web_message(sid, 'user', body=None, media_url=media_url)
-
-    # Add to operator queue
+    # Add to operator queue first — we need queue_id in the message metadata
     queue_id = add_to_operator_queue(sid, media_url, quality_ok=quality_ok)
 
-    # Simple ack — no ConfirmCard, no state machine changes
-    save_web_message(sid, 'bot', bt('photo_processing', img_lang))
+    # Save user message (image) — no progress metadata on user side
+    user_msg_id = save_web_message(sid, 'user', body=None, media_url=media_url)
+
+    # Bot ack message carries the progress metadata. The frontend renders a
+    # smooth 5% → 90% animation below this message over ~5 minutes so it feels
+    # like the AI is actively reading. Server only bumps to 95/100 on
+    # operator pick / completion.
+    save_web_message(
+        sid, 'bot',
+        bt('photo_processing', img_lang),
+        metadata={
+            'queue_id':       queue_id,
+            'progress':       5,
+            'progress_label': 'reading',
+        },
+    )
 
     # Background: shadow parse (AI runs silently, result stored for operator pre-fill)
     background_tasks.add_task(
@@ -1113,7 +1383,9 @@ async def api_send_image(
 def _shadow_parse_image(store_id: int, queue_id: int, filepath: str,
                         mime_type: str, language: str = 'hinglish'):
     """Background: run AI parse silently and store result for operator pre-fill.
-    Does NOT send any message to user. Does NOT change bot_state."""
+    Does NOT send any message to user. Does NOT change bot_state.
+    Note: we don't bump progress here — the frontend interpolates it smoothly
+    over time to make it feel like continuous reading."""
     try:
         ctx   = build_store_context(store_id)
         etags = [t['tag'] for t in get_store_expense_tags(store_id, limit=15)]
@@ -1163,10 +1435,21 @@ def _shadow_parse_image(store_id: int, queue_id: int, filepath: str,
 
 @app.get('/api/messages')
 async def api_get_messages(phone: str, after_id: int = 0):
-    """Poll for new messages. Returns messages newer than after_id."""
+    """Poll for new messages. Returns messages newer than after_id PLUS
+    any recent user photo messages that are still in-flight (progress < 100),
+    so the frontend can refresh their progress bars live."""
     store = get_or_create_store(phone)
     sid   = store['id']
     msgs  = get_web_messages(sid, after_id=after_id)
+
+    # Merge in any in-progress photos (regardless of after_id). Use id-dedup.
+    in_flight = get_in_progress_photo_messages(sid, limit=10)
+    if in_flight:
+        seen = {m['id'] for m in msgs}
+        for m in in_flight:
+            if m['id'] not in seen:
+                msgs.append(m)
+        msgs.sort(key=lambda m: m.get('id', 0))
 
     # Check if image is currently being processed
     bot_state  = get_bot_state(sid)
@@ -1501,12 +1784,97 @@ async def api_analytics(
             'udhaar_received_period':  udhaar_received_period,
         },
         'expense_tags':   period_data.get('expense_tags', {}),
+        'sales_tags':     period_data.get('sales_tags', {}),
         'daily_trend':    daily_trend,
         'staff_payments': staff_payments,
         'payment_split':  payment_split,
         'top_receivers':  top_receivers,
         'dues_summary':   dues_summary,
         'others_summary': others_summary,
+    }
+
+
+@app.get('/api/sales/history')
+async def api_sales_history(
+    phone: str,
+    tag:   Optional[str] = None,       # exact tag or 'uncategorized' for untagged
+    period: str = 'month',
+    start: Optional[str] = None,
+    end:   Optional[str] = None,
+):
+    """Return individual sale transactions for a tag within date range."""
+    store = get_or_create_store(phone)
+    sid = store['id']
+    today = date.today()
+
+    if start and end:
+        try:
+            date.fromisoformat(start); date.fromisoformat(end)
+        except ValueError:
+            raise HTTPException(status_code=400, detail='Invalid date format. Use YYYY-MM-DD.')
+    elif period == 'day':
+        start = end = today.isoformat()
+    elif period == 'week':
+        start = (today - timedelta(days=6)).isoformat(); end = today.isoformat()
+    elif period == 'year':
+        start = today.replace(month=1, day=1).isoformat(); end = today.isoformat()
+    else:  # month (default)
+        start = today.replace(day=1).isoformat(); end = today.isoformat()
+
+    txns = get_sales_by_tag(sid, start, end, tag)
+    total = sum(t['amount'] for t in txns)
+    return {
+        'tag':          tag or 'all',
+        'start':        start,
+        'end':          end,
+        'total':        total,
+        'count':        len(txns),
+        'transactions': txns,
+    }
+
+
+@app.get('/api/expenses/history')
+async def api_expenses_history(
+    phone: str,
+    tags:  Optional[str] = None,       # CSV of raw tags to include
+    period: str = 'month',
+    start: Optional[str] = None,
+    end:   Optional[str] = None,
+):
+    """Return individual expense transactions filtered by one or more tags.
+
+    Example: tags=staff_salary,staff_expense,staff%20expense  → all staff expenses
+             tags=uncategorized                               → only untagged
+             tags omitted                                     → all expenses
+    """
+    store = get_or_create_store(phone)
+    sid = store['id']
+    today = date.today()
+
+    if start and end:
+        try:
+            date.fromisoformat(start); date.fromisoformat(end)
+        except ValueError:
+            raise HTTPException(status_code=400, detail='Invalid date format. Use YYYY-MM-DD.')
+    elif period == 'day':
+        start = end = today.isoformat()
+    elif period == 'week':
+        start = (today - timedelta(days=6)).isoformat(); end = today.isoformat()
+    elif period == 'year':
+        start = today.replace(month=1, day=1).isoformat(); end = today.isoformat()
+    else:  # month (default)
+        start = today.replace(day=1).isoformat(); end = today.isoformat()
+
+    tag_list = [t.strip() for t in tags.split(',') if t.strip()] if tags else None
+    txns = get_expenses_by_tags(sid, start, end, tag_list)
+    total = sum(t['amount'] for t in txns)
+    return {
+        'tags':         tag_list or ['all'],
+        'start':        start,
+        'end':          end,
+        'total':        total,
+        'count':        len(txns),
+        'transactions': txns,
     }
 
 
@@ -2129,6 +2497,11 @@ async def admin_pick_queue(request: Request, queue_id: int, operator_id: str = '
     operator = verify_admin_token(request)
     op_id = operator_id if operator_id != 'default' else str(operator.get('id', 'default'))
     update_queue_status(queue_id, 'in_progress', op_id)
+
+    # Note: we don't bump user-facing progress on operator pick anymore —
+    # it stays at the time-based value (capped 90%) until the operator saves.
+    # The jump 90% → 100% happens in /complete.
+
     shadow = get_shadow_parse_for_queue(queue_id)
     ai_prefill = None
     if shadow and shadow.get('ai_output'):
@@ -2160,6 +2533,72 @@ async def admin_pick_queue(request: Request, queue_id: int, operator_id: str = '
         except Exception as e:
             log.error(f"Failed to parse AI output for queue {queue_id}: {e}")
     return {'status': 'picked', 'ai_prefill': ai_prefill}
+
+
+@app.get('/api/admin/queue/{queue_id}/detail')
+async def admin_queue_detail(request: Request, queue_id: int):
+    """Read-only view for processed items. Returns photo path, store info,
+    and the operator's saved transactions so the dashboard can display what
+    was entered without changing any queue status."""
+    verify_admin_token(request)
+
+    from moneybook_db import get_queue_item
+    q = get_queue_item(queue_id)
+    if not q:
+        raise HTTPException(status_code=404, detail='Queue item not found')
+
+    # Enrich with store info
+    store = db.stores.find_one({"id": q['store_id']}, {"_id": 0}) if False else None
+    # (use the already-imported mongo db via moneybook_db)
+    from moneybook_db import db as _mdb
+    store = _mdb.stores.find_one({"id": q['store_id']}, {"_id": 0}) or {}
+
+    # Parse operator_output — list of transactions the operator actually saved
+    shadow = get_shadow_parse_for_queue(queue_id)
+    transactions = []
+    if shadow and shadow.get('operator_output'):
+        try:
+            transactions = json.loads(shadow['operator_output']) or []
+        except Exception:
+            transactions = []
+
+    # Also split into in/out using same logic as pick() for display
+    in_entries, out_entries = [], []
+    for t in transactions:
+        entry = {
+            'description':  t.get('description', ''),
+            'amount':       t.get('amount', 0),
+            'type':         t.get('type', ''),
+            'person':       t.get('person_name', ''),
+            'tag':          t.get('tag', ''),
+            'payment_mode': t.get('payment_mode', ''),
+        }
+        col = t.get('column', '')
+        if col == 'out' or t.get('type') in ('expense', 'dues_given', 'bank_deposit'):
+            out_entries.append(entry)
+        else:
+            in_entries.append(entry)
+
+    # Pick the date most txns have
+    first_date = transactions[0].get('date') if transactions else None
+
+    return {
+        'queue_id':     queue_id,
+        'status':       q.get('status'),
+        'created_at':   q.get('created_at'),
+        'completed_at': q.get('completed_at'),
+        'image_path':   q.get('image_path'),
+        'notes':        q.get('notes'),
+        'store_id':     q.get('store_id'),
+        'store_name':   store.get('name') or '',
+        'store_phone':  store.get('phone') or '',
+        'date':         first_date,
+        'entries': {
+            'in':  in_entries,
+            'out': out_entries,
+        },
+        'transaction_count': len(transactions),
+    }
 
 
 @app.get('/api/admin/queue/{queue_id}/prefill')
@@ -2233,6 +2672,9 @@ async def admin_complete_queue(request: Request, queue_id: int, body: dict = Bod
     operator_output = json.dumps(transactions, ensure_ascii=False, default=str)
     complete_queue_item(queue_id, operator_output)
 
+    # Progress: 100% done — entries saved
+    update_photo_progress(store_id, queue_id, 100, 'completed')
+
     # Score AI accuracy and trigger per-store learning
     accuracy_result = None
     try:
@@ -2273,10 +2715,16 @@ async def admin_complete_queue(request: Request, queue_id: int, body: dict = Bod
             fardi_lines = fardi_lines[:-1]
         fardi_body = '\n'.join(fardi_lines)
         header = f"✅ *{count} entr{'ies' if count != 1 else 'y'} saved from your photo!*\n\n"
-        save_web_message(store_id, 'bot', header + fardi_body)
+        save_web_message(
+            store_id, 'bot', header + fardi_body,
+            metadata={'queue_id': queue_id, 'saved_from_photo': True},
+        )
     else:
-        save_web_message(store_id, 'bot',
-                         "✅ Photo processed — no entries to save.")
+        save_web_message(
+            store_id, 'bot',
+            "✅ Photo processed — no entries to save.",
+            metadata={'queue_id': queue_id, 'saved_from_photo': True},
+        )
 
     resp = {
         'status': 'completed',
@@ -2308,7 +2756,42 @@ async def admin_reject_queue(request: Request, queue_id: int):
     save_web_message(q['store_id'], 'bot',
                      "⚠️ Photo unclear. Please resend a clearer photo.")
 
+    # Progress: 100% — flow finished (user will see rejection message)
+    update_photo_progress(q['store_id'], queue_id, 100, 'rejected')
+
     return {'status': 'skipped'}
+
+
+class AdminSendMessageRequest(BaseModel):
+    body: str                       # Message text to send to the user
+    queue_id: Optional[int] = None  # Optional: resolves store_id from queue
+    store_id: Optional[int] = None  # Or specify store_id directly
+
+
+@app.post('/api/admin/send-message')
+async def admin_send_message(request: Request, req: AdminSendMessageRequest):
+    """Operator sends a custom message to a user's chat.
+    Provide either queue_id or store_id."""
+    verify_admin_token(request)
+
+    body = (req.body or '').strip()
+    if not body:
+        raise HTTPException(status_code=400, detail='Message body is required')
+    if len(body) > 2000:
+        raise HTTPException(status_code=400, detail='Message too long (max 2000 chars)')
+
+    sid = req.store_id
+    if not sid and req.queue_id:
+        from moneybook_db import get_queue_item
+        q = get_queue_item(req.queue_id)
+        if not q:
+            raise HTTPException(status_code=404, detail='Queue item not found')
+        sid = q['store_id']
+    if not sid:
+        raise HTTPException(status_code=400, detail='queue_id or store_id required')
+
+    msg_id = save_web_message(sid, 'bot', body)
+    return {'status': 'sent', 'message_id': msg_id, 'store_id': sid}
 
 
 @app.get('/api/admin/stats')

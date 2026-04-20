@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { fetchAnalytics } from "../api.js";
+import { fetchAnalytics, fetchSalesHistory, fetchExpenseHistory } from "../api.js";
 import { t, tagLabel } from "../translations.js";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -53,6 +53,15 @@ const TAG_META = {
   telephone: { icon: "📞", color: "#7B1FA2" },
   other: { icon: "📋", color: "#607D8B" },
   uncategorized: { icon: "📋", color: "#9E9E9E" },
+  sale: { icon: "💰", color: "#2E7D32" },
+  retail_sale: { icon: "🛍️", color: "#2E7D32" },
+  wholesale: { icon: "📦", color: "#1B5E20" },
+  online_sale: { icon: "🌐", color: "#00695C" },
+  credit_sale: { icon: "📒", color: "#558B2F" },
+  cash_sale: { icon: "💵", color: "#388E3C" },
+  upi_sale: { icon: "📱", color: "#43A047" },
+  card_sale: { icon: "💳", color: "#00897B" },
+  return: { icon: "↩️", color: "#C62828" },
   store_expense: { icon: "🏪", color: "#795548" },
   "staff expense": { icon: "👷", color: "#FF9800" },
   shop_supplies: { icon: "🛒", color: "#FF5722" },
@@ -121,6 +130,210 @@ function MiniBars({ pct, color }) {
         />
       ))}
     </svg>
+  );
+}
+
+// ── Expandable Sales Card ────────────────────────────────────────────────────
+
+function fmtDateShort(d) {
+  if (!d) return "";
+  // d: "YYYY-MM-DD" → "DD MMM"
+  const [y, m, day] = d.split("-");
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${parseInt(day, 10)} ${months[parseInt(m, 10) - 1] || m}`;
+}
+
+function HistoryCard({
+  labelTag,           // string used for getMeta() + tagLabel() display
+  displayLabel,       // optional explicit label override
+  amt,
+  pct,
+  showPct = true,
+  language,
+  fetchFn,            // async () => { transactions, total, count }
+  amountColor = "#2e7d32",
+  amountPrefix = "+",
+  emptyText,
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [history, setHistory] = useState(null);
+  const [loadingH, setLoadingH] = useState(false);
+  const { icon, color } = getMeta(labelTag);
+
+  async function toggleExpand() {
+    if (!expanded && !history) {
+      setLoadingH(true);
+      try {
+        const res = await fetchFn();
+        setHistory(res);
+      } catch (e) {
+        setHistory({ transactions: [] });
+      } finally {
+        setLoadingH(false);
+      }
+    }
+    setExpanded((v) => !v);
+  }
+
+  const shownLabel = displayLabel || tagLabel(labelTag, language);
+
+  return (
+    <div
+      style={{
+        background: "#fff",
+        borderRadius: 14,
+        marginBottom: 10,
+        boxShadow: "0 2px 10px rgba(0,0,0,0.06)",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        onClick={toggleExpand}
+        style={{
+          padding: "14px",
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          cursor: "pointer",
+        }}
+      >
+        <div
+          style={{
+            width: 46,
+            height: 46,
+            borderRadius: "50%",
+            flexShrink: 0,
+            background: `${color}18`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 22,
+          }}
+        >
+          {icon}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: 10,
+              color: "#999",
+              fontWeight: 700,
+              letterSpacing: 1,
+              marginBottom: 2,
+            }}
+          >
+            {shownLabel.toUpperCase()}
+          </div>
+          <div
+            style={{
+              fontSize: 20,
+              fontWeight: 800,
+              color: "#1a1a1a",
+              lineHeight: 1.2,
+            }}
+          >
+            {fmtRs(amt)}
+          </div>
+          {showPct && (
+            <div style={{ fontSize: 10, color: "#bbb", marginTop: 2 }}>
+              {pct}% {t('of_total', language)}
+            </div>
+          )}
+        </div>
+        <MiniBars pct={pct} color={color} />
+        <div style={{ fontSize: 11, color: "#bbb", marginLeft: 4 }}>
+          {expanded ? "▲" : "▼"}
+        </div>
+      </div>
+
+      {expanded && (
+        <div
+          style={{
+            borderTop: "1px solid #f0f0f0",
+            padding: "8px 14px 12px",
+            background: "#fafbfc",
+          }}
+        >
+          {loadingH ? (
+            <div style={{ textAlign: "center", padding: "10px 0", color: "#bbb", fontSize: 12 }}>
+              ⏳ {t('loading', language)}
+            </div>
+          ) : (history?.transactions || []).length === 0 ? (
+            <div style={{ textAlign: "center", padding: "10px 0", color: "#bbb", fontSize: 12 }}>
+              {emptyText || "No transactions found"}
+            </div>
+          ) : (
+            <>
+              {(history.transactions || []).map((txn, i, arr) => (
+                <div
+                  key={i}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    padding: "8px 0",
+                    borderBottom: i < arr.length - 1 ? "1px solid #f0f0f0" : "none",
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontSize: 13,
+                        color: "#1a1a1a",
+                        fontWeight: 500,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {txn.description || txn.person_name || shownLabel}
+                    </div>
+                    <div style={{ fontSize: 10, color: "#999", marginTop: 2 }}>
+                      {fmtDateShort(txn.date)}
+                      {txn.payment_mode && (
+                        <span style={{ marginLeft: 6, padding: "1px 6px", background: "#e8f5e9", color: "#2e7d32", borderRadius: 4 }}>
+                          {txn.payment_mode}
+                        </span>
+                      )}
+                      {txn.tag && txn.tag !== labelTag && (
+                        <span style={{ marginLeft: 6, fontSize: 9, color: "#999" }}>
+                          · {tagLabel(txn.tag, language)}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 14,
+                      fontWeight: 700,
+                      color: amountColor,
+                      marginLeft: 8,
+                    }}
+                  >
+                    {amountPrefix}{fmtRs(txn.amount)}
+                  </div>
+                </div>
+              ))}
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginTop: 6,
+                  paddingTop: 8,
+                  borderTop: "1px dashed #ddd",
+                  fontSize: 12,
+                  color: "#666",
+                }}
+              >
+                <span>{(history.count || 0)} entries</span>
+                <span style={{ fontWeight: 700, color: "#1a1a1a" }}>{fmtRs(history.total || 0)}</span>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -300,8 +513,10 @@ export default function AnalyticsPage({
     if (!data) return { expenseCats: [], collectionCats: [] };
     const collections = [];
     let staffTotal = kpis.staff_expenses || 0; // staff_salary from kpis
+    const staffRawTags = [];                    // track raw tags rolled into Staff
     let discountTotal = 0;
-    const storeExpenseByTag = {}; // tag → amount
+    const discountRawTags = [];                 // track raw tags rolled into Discount
+    const storeExpenseByTag = {};               // tag → amount
 
     Object.entries(data.expense_tags || {}).forEach(([tag, amt]) => {
       const lower = tag.toLowerCase();
@@ -309,17 +524,19 @@ export default function AnalyticsPage({
       // ✅ HANDLE DISCOUNT FIRST
       if (lower.includes("discount")) {
         discountTotal += amt;
+        discountRawTags.push(tag);
         return;
       }
 
       // ❗ THEN check collection
       if (isCollection(tag)) {
-        collections.push({ tag, amt });
+        collections.push({ tag, amt, rawTags: [tag] });
         return;
       }
 
       if (lower.includes("staff")) {
         staffTotal += amt;
+        staffRawTags.push(tag);
       } else {
         // Per-category store expense breakdown
         storeExpenseByTag[tag] = (storeExpenseByTag[tag] || 0) + amt;
@@ -327,13 +544,16 @@ export default function AnalyticsPage({
     });
 
     const expenses = [];
-    if (staffTotal > 0)
-      expenses.push({ tag: "staff_expense", amt: staffTotal });
+    if (staffTotal > 0) {
+      // Always include standard staff tag aliases so historical data matches
+      const allStaff = Array.from(new Set([...staffRawTags, 'staff_salary', 'staff_expense', 'staff expense']));
+      expenses.push({ tag: "staff_expense", amt: staffTotal, rawTags: allStaff });
+    }
     if (discountTotal > 0)
-      expenses.push({ tag: "cash_discount", amt: discountTotal });
+      expenses.push({ tag: "cash_discount", amt: discountTotal, rawTags: discountRawTags });
     // Add individual store expense categories
     Object.entries(storeExpenseByTag).forEach(([tag, amt]) => {
-      if (amt > 0) expenses.push({ tag, amt });
+      if (amt > 0) expenses.push({ tag, amt, rawTags: [tag] });
     });
 
     return {
@@ -344,6 +564,15 @@ export default function AnalyticsPage({
 
   const expenseTotal = expenseCats.reduce((s, c) => s + c.amt, 0) || 1;
   const collectionTotal = collectionCats.reduce((s, c) => s + c.amt, 0) || 1;
+
+  // Sales — single consolidated view (no tag grouping)
+  const totalSales = kpis.total_sales || 0;
+
+  // Helper: build a fetch function for the currently-selected period
+  function buildFetchWindow() {
+    const { start: cs, end: ce } = customRange || {};
+    return { period, start: cs || null, end: ce || null };
+  }
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
@@ -523,6 +752,58 @@ export default function AnalyticsPage({
           </div>
         )}
 
+        {/* ── Sales ───────────────────────────────────────────────────────── */}
+        {!loading && (
+          <div style={{ marginBottom: 20 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                marginBottom: 12,
+              }}
+            >
+              <span style={{ fontSize: 15, fontWeight: 700, color: "#1a1a1a" }}>
+                {t('sec_sales', language) || "Sales"}
+              </span>
+              <span style={{ fontSize: 13, fontWeight: 700, color: "#2e7d32" }}>
+                {fmtRs(totalSales)}
+              </span>
+            </div>
+            {totalSales === 0 ? (
+              <div
+                style={{
+                  background: "#fff",
+                  borderRadius: 14,
+                  padding: 24,
+                  textAlign: "center",
+                  color: "#aaa",
+                  fontSize: 14,
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+                }}
+              >
+                {t('no_sales_period', language) || "No sales in this period"}
+              </div>
+            ) : (
+              <HistoryCard
+                labelTag="sale"
+                displayLabel={t('total_sales', language) || "Total Sales"}
+                amt={totalSales}
+                pct={100}
+                showPct={false}
+                language={language}
+                amountColor="#2e7d32"
+                amountPrefix="+"
+                emptyText={t('no_sales_period', language) || "No sales"}
+                fetchFn={() => {
+                  const w = buildFetchWindow();
+                  return fetchSalesHistory(phone, w.period, w.start, w.end);
+                }}
+              />
+            )}
+          </div>
+        )}
+
         {/* ── Expense Categories ─────────────────────────────────────────── */}
         {!loading && (
           <div style={{ marginBottom: 20 }}>
@@ -553,71 +834,27 @@ export default function AnalyticsPage({
                 {t('no_expenses_period', language)}
               </div>
             ) : (
-              expenseCats.map(({ tag, amt }) => {
+              expenseCats.map(({ tag, amt, rawTags }) => {
                 const pct =
                   totalExpenses > 0
                     ? Math.round((amt / totalExpenses) * 100)
                     : 0;
-                const { icon, color } = getMeta(tag);
                 return (
-                  <div
+                  <HistoryCard
                     key={tag}
-                    style={{
-                      background: "#fff",
-                      borderRadius: 14,
-                      padding: "14px",
-                      marginBottom: 10,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 12,
-                      boxShadow: "0 2px 10px rgba(0,0,0,0.06)",
+                    labelTag={tag}
+                    amt={amt}
+                    pct={pct}
+                    showPct={true}
+                    language={language}
+                    amountColor="#C62828"
+                    amountPrefix="-"
+                    emptyText={t('no_expenses_period', language)}
+                    fetchFn={() => {
+                      const w = buildFetchWindow();
+                      return fetchExpenseHistory(phone, rawTags, w.period, w.start, w.end);
                     }}
-                  >
-                    <div
-                      style={{
-                        width: 46,
-                        height: 46,
-                        borderRadius: "50%",
-                        flexShrink: 0,
-                        background: `${color}18`,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: 22,
-                      }}
-                    >
-                      {icon}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontSize: 10,
-                          color: "#999",
-                          fontWeight: 700,
-                          letterSpacing: 1,
-                          marginBottom: 2,
-                        }}
-                      >
-                        {tagLabel(tag, language).toUpperCase()}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 20,
-                          fontWeight: 800,
-                          color: "#1a1a1a",
-                          lineHeight: 1.2,
-                        }}
-                      >
-                        {fmtRs(amt)}
-                      </div>
-                      <div
-                        style={{ fontSize: 10, color: "#bbb", marginTop: 2 }}
-                      >
-                        {pct}% {t('of_total', language)}
-                      </div>
-                    </div>
-                    <MiniBars pct={pct} color={color} />
-                  </div>
+                  />
                 );
               })
             )}

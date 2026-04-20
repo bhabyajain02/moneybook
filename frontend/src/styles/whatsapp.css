@@ -2831,13 +2831,201 @@ html, body, #root {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.operator-queue-qid {
+  font-size: 10px;
+  color: #94A3B8;
+  font-weight: 600;
+  background: #F1F5F9;
+  padding: 1px 5px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.operator-queue-phone {
+  font-size: 11px;
+  color: #475569;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.2px;
 }
 
 .operator-queue-time {
-  font-size: 12px;
-  color: #888;
-  margin-top: 2px;
+  font-size: 11px;
+  color: #64748B;
+  margin-top: 3px;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  font-variant-numeric: tabular-nums;
 }
+
+.operator-queue-timeago {
+  color: #94A3B8;
+  font-size: 10px;
+}
+
+/* Tabs in the operator sidebar: Active / Processed */
+.operator-tabs {
+  display: flex;
+  border-bottom: 1px solid #E2E8F0;
+  background: #F8FAFC;
+  flex-shrink: 0;
+}
+.operator-tab {
+  flex: 1;
+  padding: 12px 8px;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748B;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+.operator-tab:hover {
+  background: #F1F5F9;
+  color: #1E293B;
+}
+.operator-tab.active {
+  color: #2563EB;
+  border-bottom-color: #2563EB;
+  background: #fff;
+}
+
+/* Processed queue item — non-clickable, lighter visual weight */
+.operator-queue-item--processed {
+  cursor: default;
+  opacity: 0.9;
+}
+.operator-queue-item--processed:hover {
+  background: #F8FAFC;
+}
+
+/* Status badge replacing urgency dot for processed items */
+.operator-status-badge {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-right: 8px;
+}
+.operator-status-badge.completed {
+  background: #DCFCE7;
+  color: #15803D;
+}
+.operator-status-badge.skipped {
+  background: #FEF2F2;
+  color: #B91C1C;
+}
+
+/* Read-only view of processed queue items */
+.operator-processed-header {
+  padding: 14px 18px;
+  background: #F8FAFC;
+  border-bottom: 1px solid #E2E8F0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.operator-status-chip {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 999px;
+  margin-right: 8px;
+  letter-spacing: 0.3px;
+}
+.operator-status-chip.completed {
+  background: #DCFCE7;
+  color: #15803D;
+}
+.operator-status-chip.skipped {
+  background: #FEF2F2;
+  color: #B91C1C;
+}
+.operator-processed-meta {
+  font-size: 13px;
+  color: #334155;
+}
+.operator-processed-dates {
+  font-size: 11px;
+  color: #64748B;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.operator-processed-entries {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.operator-processed-section {
+  background: #fff;
+  border: 1px solid #E2E8F0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.operator-processed-section-title {
+  padding: 10px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  border-bottom: 1px solid #F1F5F9;
+}
+.operator-processed-section-title.in {
+  color: #15803D;
+  background: #F0FDF4;
+}
+.operator-processed-section-title.out {
+  color: #B91C1C;
+  background: #FEF2F2;
+}
+.operator-processed-rows {
+  display: flex;
+  flex-direction: column;
+}
+.operator-processed-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #F1F5F9;
+}
+.operator-processed-row:last-child {
+  border-bottom: none;
+}
+.operator-processed-desc {
+  flex: 1;
+  min-width: 0;
+}
+.operator-processed-amt {
+  font-weight: 700;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.operator-processed-amt.in  { color: #15803D; }
+.operator-processed-amt.out { color: #B91C1C; }
 
 /* ── Main Area ───────────────────────────────────────── */
 
@@ -3105,4 +3293,10 @@ html, body, #root {
   margin-left: auto;
   font-size: 11px;
   color: #999;
+}
+
+/* Pulsing dot used by the photo "reading" progress indicator */
+@keyframes pulse {
+  0%, 100% { opacity: 1;   transform: scale(1); }
+  50%      { opacity: 0.4; transform: scale(1.3); }
 }

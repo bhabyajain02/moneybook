@@ -22,6 +22,34 @@ export async function checkPhone(phone) {
   // returns { exists: bool, name: string, phone: string }
 }
 
+export async function sendOtp(phone) {
+  const r = await fetch(`${BASE}/send-otp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ phone }),
+  });
+  const data = await safeJson(r);
+  if (!r.ok) throw new Error(data.detail || "Could not send OTP");
+  return data;
+  // returns { sent, phone, expires_in, dev_mode }
+}
+
+export async function verifyOtp(phone, code) {
+  const r = await fetch(`${BASE}/verify-otp`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ phone, code }),
+  });
+  const data = await safeJson(r);
+  if (!r.ok) {
+    const err = new Error(data.detail || "otp_verify_failed");
+    err.code = data.detail;
+    err.status = r.status;
+    throw err;
+  }
+  return data;
+}
+
 export async function login(phone, storeName = "") {
   const r = await fetch(`${BASE}/login`, {
     method: "POST",
@@ -75,6 +103,37 @@ export async function fetchAnalytics(
   if (start && end) url += `&start=${start}&end=${end}`;
   const r = await fetch(url);
   if (!r.ok) throw new Error("Analytics fetch failed");
+  return r.json();
+}
+
+export async function fetchSalesHistory(
+  phone,
+  period = "month",
+  start = null,
+  end = null,
+) {
+  // Returns ALL sales in the selected range (no tag breakdown)
+  let url = `${BASE}/sales/history?phone=${encodeURIComponent(phone)}&period=${period}`;
+  if (start && end) url += `&start=${start}&end=${end}`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error("Sales history fetch failed");
+  return r.json();
+}
+
+export async function fetchExpenseHistory(
+  phone,
+  rawTags,                // array of tag strings, or null/undefined for all
+  period = "month",
+  start = null,
+  end = null,
+) {
+  const tagsParam = (rawTags && rawTags.length)
+    ? `&tags=${encodeURIComponent(rawTags.join(','))}`
+    : '';
+  let url = `${BASE}/expenses/history?phone=${encodeURIComponent(phone)}&period=${period}${tagsParam}`;
+  if (start && end) url += `&start=${start}&end=${end}`;
+  const r = await fetch(url);
+  if (!r.ok) throw new Error("Expenses history fetch failed");
   return r.json();
 }
 
@@ -378,6 +437,29 @@ export async function adminRejectQueue(queueId) {
     headers: getAdminHeaders(),
   });
   return safeJson(r);
+}
+
+export async function adminGetQueueDetail(queueId) {
+  const r = await fetch(`${BASE}/admin/queue/${queueId}/detail`, {
+    headers: getAdminHeaders(),
+  });
+  const data = await safeJson(r);
+  if (!r.ok) throw new Error(data.detail || "Failed to load detail");
+  return data;
+}
+
+export async function adminSendMessage({ queueId, storeId, body }) {
+  const payload = { body };
+  if (queueId) payload.queue_id = queueId;
+  if (storeId) payload.store_id = storeId;
+  const r = await fetch(`${BASE}/admin/send-message`, {
+    method: "POST",
+    headers: getAdminHeaders(),
+    body: JSON.stringify(payload),
+  });
+  const data = await safeJson(r);
+  if (!r.ok) throw new Error(data.detail || "Could not send message");
+  return data;
 }
 
 export async function adminGetStats() {

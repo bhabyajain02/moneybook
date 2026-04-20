@@ -128,33 +128,52 @@ export default function ChatWindow({ phone, storeName, language = 'hinglish', on
       const data = await pollMessages(phone, lastIdRef.current)
       if (data.messages?.length > 0) {
         setMessages(prev => {
-          const existing = new Set(prev.map(m => m.id))
-          const fresh = data.messages.filter(m => !existing.has(m.id))
-          if (fresh.length === 0) return prev
-          lastIdRef.current = Math.max(lastIdRef.current, ...fresh.map(m => m.id))
+          // Build id → msg map for quick upsert
+          const byId = new Map(prev.map(m => [m.id, m]))
+          let hadChange = false
 
-          const processed = fresh.map(m => {
-            if (m.direction === 'bot' && m.metadata?.pending_transactions?.length > 0) {
-              // Capture originals for learning — only on first arrival
-              if (!originalTxnsRef.current[m.id]) {
-                originalTxnsRef.current[m.id] = JSON.parse(
-                  JSON.stringify(m.metadata.pending_transactions)
-                )
-              }
-              // Photo-sourced → open modal, hide bot bubble
-              if (m.metadata?.display || m.metadata?.source === 'image') {
-                pendingPhotoRef.current = {
-                  msgId:   m.id,
-                  txns:    m.metadata.pending_transactions,
-                  date:    m.metadata.page_date,
-                  display: m.metadata.display || null,
+          data.messages.forEach(m => {
+            const isNew = !byId.has(m.id)
+            if (isNew) {
+              hadChange = true
+              // First-time processing — capture originals, handle photo-sourced bot msgs
+              let toInsert = m
+              if (m.direction === 'bot' && m.metadata?.pending_transactions?.length > 0) {
+                if (!originalTxnsRef.current[m.id]) {
+                  originalTxnsRef.current[m.id] = JSON.parse(
+                    JSON.stringify(m.metadata.pending_transactions)
+                  )
                 }
-                return { ...m, metadata: { ...m.metadata, overwritten: true } }
+                if (m.metadata?.display || m.metadata?.source === 'image') {
+                  pendingPhotoRef.current = {
+                    msgId:   m.id,
+                    txns:    m.metadata.pending_transactions,
+                    date:    m.metadata.page_date,
+                    display: m.metadata.display || null,
+                  }
+                  toInsert = { ...m, metadata: { ...m.metadata, overwritten: true } }
+                }
+              }
+              byId.set(m.id, toInsert)
+              lastIdRef.current = Math.max(lastIdRef.current, m.id)
+            } else {
+              // Existing message — detect meaningful changes (progress / metadata)
+              const prevMsg = byId.get(m.id)
+              const prevProg = prevMsg?.metadata?.progress
+              const newProg  = m.metadata?.progress
+              const prevLabel = prevMsg?.metadata?.progress_label
+              const newLabel  = m.metadata?.progress_label
+              if (prevProg !== newProg || prevLabel !== newLabel) {
+                // Merge preserving any client-side metadata (e.g. overwritten flag)
+                const mergedMeta = { ...(prevMsg?.metadata || {}), ...(m.metadata || {}) }
+                byId.set(m.id, { ...prevMsg, ...m, metadata: mergedMeta })
+                hadChange = true
               }
             }
-            return m
           })
-          return [...prev, ...processed]
+
+          if (!hadChange) return prev
+          return Array.from(byId.values()).sort((a, b) => (a.id || 0) - (b.id || 0))
         })
 
         // Open photo review modal — or classification widget first if persons need classifying

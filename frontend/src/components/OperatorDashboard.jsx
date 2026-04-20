@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import {
   adminGetQueue, adminPickQueue, adminCompleteQueue,
-  adminRejectQueue, adminGetStats, adminPollQueue,
+  adminRejectQueue, adminGetStats, adminPollQueue, adminSendMessage,
+  adminGetQueueDetail,
   adminLogin, adminVerifyToken, adminLogout,
   adminGetDescriptions, adminGetPrefill,
 } from '../api.js'
@@ -17,17 +18,54 @@ function normalizeImageUrl(url) {
   return url
 }
 
+// Backend writes `datetime.utcnow().isoformat()` which has no "Z" suffix.
+// new Date(iso) would treat it as LOCAL time — causing 5.5h offsets in IST.
+// This helper appends Z if no timezone info is present.
+function parseUtcIso(iso) {
+  if (!iso) return 0
+  let s = String(iso).replace(' ', 'T')
+  if (!/(Z|[+\-]\d\d:?\d\d)$/.test(s)) s += 'Z'
+  const p = Date.parse(s)
+  return isNaN(p) ? 0 : p
+}
+
 function timeAgo(iso) {
-  if (!iso) return ''
-  const diff = (Date.now() - new Date(iso).getTime()) / 1000
-  if (diff < 60)   return `${Math.floor(diff)}s ago`
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  return `${Math.floor(diff / 3600)}h ago`
+  const ms = parseUtcIso(iso)
+  if (!ms) return ''
+  const diff = (Date.now() - ms) / 1000
+  if (diff < 60)    return `${Math.max(1, Math.floor(diff))}s ago`
+  if (diff < 3600)  return `${Math.floor(diff / 60)}m ago`
+  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`
+  return `${Math.floor(diff / 86400)}d ago`
+}
+
+function formatDateTime(iso) {
+  const ms = parseUtcIso(iso)
+  if (!ms) return ''
+  const d = new Date(ms)
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+  const day    = d.getDate()
+  const month  = months[d.getMonth()]
+  let   hours  = d.getHours()
+  const mins   = String(d.getMinutes()).padStart(2, '0')
+  const ampm   = hours >= 12 ? 'PM' : 'AM'
+  hours = hours % 12 || 12
+  return `${day} ${month}, ${hours}:${mins} ${ampm}`
+}
+
+function formatPhone(raw) {
+  if (!raw) return ''
+  // Strip 'web:' prefix and normalize to "+91 XXXXX XXXXX"
+  const cleaned = String(raw).replace(/^web:/, '')
+  const m = cleaned.match(/^\+?91(\d{5})(\d{5})$/)
+  if (m) return `+91 ${m[1]} ${m[2]}`
+  return cleaned
 }
 
 function urgencyClass(iso) {
-  if (!iso) return 'green'
-  const mins = (Date.now() - new Date(iso).getTime()) / 60000
+  const ms = parseUtcIso(iso)
+  if (!ms) return 'green'
+  const mins = (Date.now() - ms) / 60000
   if (mins < 10) return 'green'
   if (mins < 30) return 'yellow'
   return 'red'
@@ -67,6 +105,120 @@ function notifyNew(count) {
   playDing()
 }
 
+/* ── Read-only view of a processed queue item ────────── */
+
+function ProcessedView({ detail, loading, onClose }) {
+  const [rotation, setRotation] = useState(0)
+
+  if (!detail) return null
+  const isSkipped = detail.status === 'skipped'
+  const imageSrc  = detail.image_path ? normalizeImageUrl(detail.image_path) : null
+  const inRows    = detail.entries?.in  || []
+  const outRows   = detail.entries?.out || []
+  const total     = inRows.length + outRows.length
+
+  return (
+    <>
+      {/* Header strip */}
+      <div className="operator-processed-header">
+        <div>
+          <div className={`operator-status-chip ${isSkipped ? 'skipped' : 'completed'}`}>
+            {isSkipped ? '⊘ Skipped' : '✓ Saved'}
+          </div>
+          <span className="operator-processed-meta">
+            <strong>{detail.store_name || 'Unnamed store'}</strong>
+            {' · '}
+            <span>#{detail.queue_id}</span>
+            {detail.store_phone && (
+              <> · <span>{formatPhone(detail.store_phone)}</span></>
+            )}
+          </span>
+          <div className="operator-processed-dates">
+            <span>Received: {formatDateTime(detail.created_at)}</span>
+            {detail.completed_at && (
+              <span> · {isSkipped ? 'Skipped' : 'Saved'}: {formatDateTime(detail.completed_at)}</span>
+            )}
+          </div>
+        </div>
+        <button type="button" className="operator-btn-sm" onClick={onClose}>✕ Close</button>
+      </div>
+
+      {/* Photo */}
+      <div className="operator-photo-area">
+        <div className="operator-photo-toolbar">
+          <button className="operator-btn-sm" onClick={() => setRotation(r => r - 90)}>↶ CCW</button>
+          <button className="operator-btn-sm" onClick={() => setRotation(r => r + 90)}>↷ CW</button>
+          <button className="operator-btn-sm" onClick={() => setRotation(0)}>Reset</button>
+        </div>
+        <div className="operator-photo-container">
+          {imageSrc ? (
+            <img
+              className="operator-photo"
+              src={imageSrc}
+              alt="Ledger"
+              style={{ transform: `rotate(${rotation}deg)` }}
+            />
+          ) : (
+            <div className="operator-no-photo">No image available</div>
+          )}
+        </div>
+      </div>
+
+      {/* Saved entries — read-only */}
+      <div className="operator-form" style={{ padding: 16 }}>
+        {loading ? (
+          <div style={{ textAlign: 'center', color: '#999' }}>Loading...</div>
+        ) : total === 0 ? (
+          <div className="operator-empty">
+            {isSkipped
+              ? 'This photo was marked as unclear and no entries were saved.'
+              : 'No entries were saved for this photo.'}
+          </div>
+        ) : (
+          <div className="operator-processed-entries">
+            <div className="operator-processed-meta" style={{ marginBottom: 12 }}>
+              {total} entr{total === 1 ? 'y' : 'ies'} saved
+              {detail.date && <> · date <strong>{detail.date}</strong></>}
+            </div>
+
+            <ReadOnlyEntryList title="JAMA (IN)" rows={inRows} tone="in" />
+            <ReadOnlyEntryList title="NAAM (OUT)" rows={outRows} tone="out" />
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
+function ReadOnlyEntryList({ title, rows, tone }) {
+  if (!rows || rows.length === 0) return null
+  return (
+    <div className="operator-processed-section">
+      <div className={`operator-processed-section-title ${tone}`}>{title} · {rows.length}</div>
+      <div className="operator-processed-rows">
+        {rows.map((r, i) => (
+          <div key={i} className="operator-processed-row">
+            <div className="operator-processed-desc">
+              <div style={{ fontWeight: 600, color: '#1a1a1a' }}>
+                {r.description || r.person || '—'}
+              </div>
+              <div style={{ fontSize: 11, color: '#64748B', marginTop: 2 }}>
+                {r.type && <span>{r.type}</span>}
+                {r.tag && <span> · {r.tag}</span>}
+                {r.person && r.description && <span> · {r.person}</span>}
+                {r.payment_mode && <span> · {r.payment_mode}</span>}
+              </div>
+            </div>
+            <div className={`operator-processed-amt ${tone}`}>
+              ₹{Number(r.amount || 0).toLocaleString('en-IN')}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 /* ── Component ───────────────────────────────────────── */
 
 export default function OperatorDashboard() {
@@ -80,6 +232,8 @@ export default function OperatorDashboard() {
 
   /* Queue state */
   const [queue, setQueue]             = useState([])
+  const [processedQueue, setProcessedQueue] = useState([])
+  const [queueTab, setQueueTab]       = useState('active') // 'active' | 'processed'
   const [selected, setSelected]       = useState(null)  // full item after pick
   const [selectedId, setSelectedId]   = useState(null)
   const [stats, setStats]             = useState({})
@@ -94,6 +248,11 @@ export default function OperatorDashboard() {
   const [rotation, setRotation]       = useState(0)
   const [typeDescriptions, setTypeDescriptions] = useState({})
   const [typeTags, setTypeTags] = useState({})
+  const [customMsg, setCustomMsg]     = useState('')
+  const [sendingMsg, setSendingMsg]   = useState(false)
+  const [msgFeedback, setMsgFeedback] = useState('')   // '', 'sent', or error text
+  const [viewing, setViewing]         = useState(null) // read-only processed item detail
+  const [viewingLoading, setViewingLoading] = useState(false)
 
   const prevCountRef   = useRef(0)
   const formRef        = useRef(null)
@@ -147,20 +306,33 @@ export default function OperatorDashboard() {
   /* ── Poll queue every 5s ───────────────────────────── */
   const refreshQueue = useCallback(async () => {
     try {
-      const [pendingData, progressData] = await Promise.all([
+      const [pendingData, progressData, completedData, skippedData] = await Promise.all([
         adminGetQueue('pending'),
         adminGetQueue('in_progress'),
+        adminGetQueue('completed'),
+        adminGetQueue('skipped'),
       ])
-      const items = [
+      const active = [
         ...(pendingData.queue || pendingData.items || []),
         ...(progressData.queue || progressData.items || []),
       ]
-      // Notify on new arrivals
-      if (items.length > prevCountRef.current && prevCountRef.current !== 0) {
-        notifyNew(items.length - prevCountRef.current)
+      const processed = [
+        ...(completedData.queue || completedData.items || []),
+        ...(skippedData.queue || skippedData.items || []),
+      ]
+      // Sort processed newest-first by completion time (fallback to created)
+      processed.sort((a, b) => {
+        const ax = a.completed_at || a.created_at || ''
+        const bx = b.completed_at || b.created_at || ''
+        return String(bx).localeCompare(String(ax))
+      })
+      // Notify only on new ACTIVE arrivals
+      if (active.length > prevCountRef.current && prevCountRef.current !== 0) {
+        notifyNew(active.length - prevCountRef.current)
       }
-      prevCountRef.current = items.length
-      setQueue(items)
+      prevCountRef.current = active.length
+      setQueue(active)
+      setProcessedQueue(processed)
     } catch { /* silent */ }
   }, [])
 
@@ -244,6 +416,10 @@ export default function OperatorDashboard() {
       const picked = await adminPickQueue(item.id || item.queue_id, operator ? String(operator.id) : 'default')
       setSelected({ ...item, ...picked })
       setSelectedId(item.id || item.queue_id)
+      // Reset custom message state + close any processed-view pane
+      setCustomMsg('')
+      setMsgFeedback('')
+      setViewing(null)
 
       // Populate form from AI prefill if available
       const prefill = picked.ai_prefill || item.ai_prefill
@@ -355,6 +531,46 @@ export default function OperatorDashboard() {
     // Select next item that isn't the current one
     const next = queue.find(q => (q.id || q.queue_id) !== selectedId)
     if (next) handleSelect(next)
+  }
+
+  /* ── View a processed (completed/skipped) queue item ─ */
+  async function handleViewProcessed(item) {
+    const qid = item.id || item.queue_id
+    // Close any active selection first
+    setSelected(null)
+    setSelectedId(null)
+    setViewingLoading(true)
+    try {
+      const detail = await adminGetQueueDetail(qid)
+      setViewing(detail)
+    } catch (e) {
+      console.error('Failed to load detail:', e)
+      setViewing(null)
+    } finally {
+      setViewingLoading(false)
+    }
+  }
+
+  function handleCloseView() {
+    setViewing(null)
+  }
+
+  /* ── Send custom message to user ───────────────────── */
+  async function handleSendMessage() {
+    const body = customMsg.trim()
+    if (!body || !selectedId || sendingMsg) return
+    setSendingMsg(true)
+    setMsgFeedback('')
+    try {
+      await adminSendMessage({ queueId: selectedId, body })
+      setCustomMsg('')
+      setMsgFeedback('sent')
+      setTimeout(() => setMsgFeedback(''), 2500)
+    } catch (e) {
+      setMsgFeedback(String(e.message || 'failed').slice(0, 80))
+    } finally {
+      setSendingMsg(false)
+    }
   }
 
   /* ── Drag & Drop ───────────────────────────────────── */
@@ -551,17 +767,38 @@ export default function OperatorDashboard() {
       <div className="operator-body">
         {/* ── Left Sidebar: Queue ────────────────────── */}
         <aside className="operator-sidebar">
-          <div className="operator-sidebar-header">
-            Queue <span className="operator-count-badge">{queue.length}</span>
+          <div className="operator-tabs">
+            <button
+              type="button"
+              className={`operator-tab ${queueTab === 'active' ? 'active' : ''}`}
+              onClick={() => setQueueTab('active')}
+            >
+              Active <span className="operator-count-badge">{queue.length}</span>
+            </button>
+            <button
+              type="button"
+              className={`operator-tab ${queueTab === 'processed' ? 'active' : ''}`}
+              onClick={() => setQueueTab('processed')}
+            >
+              Processed <span className="operator-count-badge">{processedQueue.length}</span>
+            </button>
           </div>
           <div className="operator-queue-list">
-            {queue.length === 0 && (
+            {queueTab === 'active' && queue.length === 0 && (
               <div className="operator-empty">No pending items</div>
             )}
-            {queue.map(item => {
+            {queueTab === 'processed' && processedQueue.length === 0 && (
+              <div className="operator-empty">No processed items yet</div>
+            )}
+
+            {/* Active items — clickable to work on */}
+            {queueTab === 'active' && queue.map(item => {
               const id = item.id || item.queue_id
               const isActive = id === selectedId
-              const urg = urgencyClass(item.created_at || item.received_at)
+              const createdIso = item.created_at || item.received_at
+              const urg = urgencyClass(createdIso)
+              const rawPhone = item.store_phone || item.phone
+              const phoneDisp = formatPhone(rawPhone)
               return (
                 <div
                   key={id}
@@ -577,8 +814,69 @@ export default function OperatorDashboard() {
                     />
                   )}
                   <div className="operator-queue-info">
-                    <div className="operator-queue-name">{item.store_name || item.phone || `#${id}`}</div>
-                    <div className="operator-queue-time">{timeAgo(item.created_at || item.received_at)}</div>
+                    <div className="operator-queue-name">
+                      {item.store_name || <em style={{ color: '#999' }}>Unnamed store</em>}
+                      <span className="operator-queue-qid">#{id}</span>
+                    </div>
+                    {phoneDisp && (
+                      <div className="operator-queue-phone">📱 {phoneDisp}</div>
+                    )}
+                    <div className="operator-queue-time">
+                      <span>{formatDateTime(createdIso)}</span>
+                      <span className="operator-queue-timeago">· {timeAgo(createdIso)}</span>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+
+            {/* Processed items — click to view read-only detail */}
+            {queueTab === 'processed' && processedQueue.map(item => {
+              const id = item.id || item.queue_id
+              const createdIso   = item.created_at || item.received_at
+              const completedIso = item.completed_at
+              const rawPhone = item.store_phone || item.phone
+              const phoneDisp = formatPhone(rawPhone)
+              const isSkipped = item.status === 'skipped'
+              const isViewing = viewing && viewing.queue_id === id
+              return (
+                <div
+                  key={id}
+                  className={`operator-queue-item operator-queue-item--processed ${isViewing ? 'active' : ''}`}
+                  onClick={() => handleViewProcessed(item)}
+                  style={{ cursor: 'pointer' }}
+                >
+                  <div className={`operator-status-badge ${isSkipped ? 'skipped' : 'completed'}`}>
+                    {isSkipped ? '⊘' : '✓'}
+                  </div>
+                  {item.image_path && (
+                    <img
+                      className="operator-thumb"
+                      src={normalizeImageUrl(item.image_path)}
+                      alt=""
+                    />
+                  )}
+                  <div className="operator-queue-info">
+                    <div className="operator-queue-name">
+                      {item.store_name || <em style={{ color: '#999' }}>Unnamed store</em>}
+                      <span className="operator-queue-qid">#{id}</span>
+                    </div>
+                    {phoneDisp && (
+                      <div className="operator-queue-phone">📱 {phoneDisp}</div>
+                    )}
+                    <div className="operator-queue-time">
+                      <span style={{ fontSize: 10, color: '#94A3B8' }}>Received:</span>{' '}
+                      <span>{formatDateTime(createdIso)}</span>
+                    </div>
+                    {completedIso && (
+                      <div className="operator-queue-time">
+                        <span style={{ fontSize: 10, color: '#94A3B8' }}>
+                          {isSkipped ? 'Skipped:' : 'Saved:'}
+                        </span>{' '}
+                        <span>{formatDateTime(completedIso)}</span>
+                        <span className="operator-queue-timeago">· {timeAgo(completedIso)}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               )
@@ -588,7 +886,19 @@ export default function OperatorDashboard() {
 
         {/* ── Main Area ──────────────────────────────── */}
         <main className="operator-main">
-          {!selected ? (
+          {/* Read-only view of a PROCESSED item — takes precedence over placeholder */}
+          {viewing ? (
+            <ProcessedView
+              detail={viewing}
+              loading={viewingLoading}
+              onClose={handleCloseView}
+            />
+          ) : viewingLoading ? (
+            <div className="operator-placeholder">
+              <div className="operator-placeholder-icon">⏳</div>
+              <p>Loading entry details...</p>
+            </div>
+          ) : !selected ? (
             <div className="operator-placeholder">
               <div className="operator-placeholder-icon">📋</div>
               <p>Select an item from the queue to start</p>
@@ -844,6 +1154,83 @@ export default function OperatorDashboard() {
                   <option value="stationery" />
                   <option value="courier" />
                 </datalist>
+
+                {/* Custom message to user */}
+                <div
+                  className="operator-custom-msg"
+                  style={{
+                    marginTop: 14,
+                    padding: '10px 12px',
+                    background: '#F8FAFC',
+                    border: '1px solid #E2E8F0',
+                    borderRadius: 8,
+                  }}
+                >
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: '#475569',
+                    letterSpacing: 0.5,
+                    textTransform: 'uppercase',
+                    marginBottom: 6,
+                  }}>
+                    <span>💬 Message to user</span>
+                    {msgFeedback === 'sent' && (
+                      <span style={{ color: '#16A34A', fontWeight: 600, textTransform: 'none' }}>
+                        ✓ Sent
+                      </span>
+                    )}
+                    {msgFeedback && msgFeedback !== 'sent' && (
+                      <span style={{ color: '#DC2626', fontWeight: 600, textTransform: 'none' }}>
+                        {msgFeedback}
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      type="text"
+                      value={customMsg}
+                      onChange={e => { setCustomMsg(e.target.value); setMsgFeedback('') }}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          handleSendMessage()
+                        }
+                      }}
+                      placeholder='e.g. "We need 1 more hour to process your photo"'
+                      disabled={sendingMsg}
+                      maxLength={2000}
+                      style={{
+                        flex: 1,
+                        padding: '8px 10px',
+                        border: '1px solid #CBD5E1',
+                        borderRadius: 6,
+                        fontSize: 13,
+                        outline: 'none',
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSendMessage}
+                      disabled={!customMsg.trim() || sendingMsg}
+                      style={{
+                        padding: '8px 16px',
+                        background: customMsg.trim() && !sendingMsg ? '#2563EB' : '#94A3B8',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 6,
+                        fontSize: 13,
+                        fontWeight: 600,
+                        cursor: customMsg.trim() && !sendingMsg ? 'pointer' : 'not-allowed',
+                      }}
+                    >
+                      {sendingMsg ? '...' : 'Send'}
+                    </button>
+                  </div>
+                </div>
 
                 {/* Action Buttons */}
                 <div className="operator-actions">
