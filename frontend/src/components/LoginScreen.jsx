@@ -175,7 +175,7 @@ export default function LoginScreen({ onLogin, initialLanguage }) {
   return (
     <div className="login-screen">
       <div className="login-logo">📒</div>
-      <h1 className="login-title">MoneyBook</h1>
+      <h1 className="login-title">SnapHisab</h1>
       <p className="login-subtitle">{t("subtitle", lang)}</p>
 
       {/* ── Phase 1: Phone entry ─────────────────────────────────── */}

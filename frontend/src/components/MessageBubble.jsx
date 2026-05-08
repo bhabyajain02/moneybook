@@ -71,7 +71,7 @@ function useSmoothProgress(msg) {
   return { progress: Math.round(shown), labelKey }
 }
 
-const BACKEND_URL = 'https://moneybook-1.onrender.com'
+const BACKEND_URL = 'https://moneybook-r4t9.onrender.com'
 
 // Normalize image URLs so they work on both web and native Android/iOS.
 // On web: relative paths like /api/uploads/x.jpg resolve against the current domain — fine.

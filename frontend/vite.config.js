@@ -7,7 +7,7 @@ export default defineConfig({
     port: 3000,
     allowedHosts: true,
     proxy: {
-      "/api": "https://moneybook-1.onrender.com",
+      "/api": "https://moneybook-r4t9.onrender.com",
     },
   },
   build: {

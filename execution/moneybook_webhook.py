@@ -93,7 +93,7 @@ NOTIFY_SMTP_PORT      = int(os.getenv('NOTIFY_SMTP_PORT', '587'))
 # Base URL of the app — used in email links.
 # Falls back to the Render URL so emails always work even if APP_BASE_URL
 # is not set as an env variable in the Render dashboard.
-APP_BASE_URL          = os.getenv('APP_BASE_URL', 'https://moneybook-1.onrender.com').rstrip('/')
+APP_BASE_URL          = os.getenv('APP_BASE_URL', 'https://moneybook-r4t9.onrender.com').rstrip('/')
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 log = logging.getLogger('moneybook')

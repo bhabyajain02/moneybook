@@ -1,7 +1,7 @@
 import { Capacitor } from "@capacitor/core";
 
 // On native mobile, use absolute URL. On web, relative (Vite proxy handles it).
-const BACKEND_URL = "https://moneybook-1.onrender.com";
+const BACKEND_URL = "https://moneybook-r4t9.onrender.com";
 const BASE = Capacitor.isNativePlatform() ? BACKEND_URL + "/api" : "/api";
 
 // Safely parse JSON — returns {} if the response is HTML/empty (e.g. proxy error)

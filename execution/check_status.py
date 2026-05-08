@@ -23,7 +23,7 @@ from pathlib import Path
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-RENDER_URL = "https://moneybook-1.onrender.com"
+RENDER_URL = "https://moneybook-r4t9.onrender.com"
 PROJECT_ROOT = Path(__file__).parent.parent          # moneybook/
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 ENV_FILE     = FRONTEND_DIR / ".env"
