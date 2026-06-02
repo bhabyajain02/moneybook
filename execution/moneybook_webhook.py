@@ -1105,79 +1105,191 @@ class SendOtpRequest(BaseModel):
     phone: str  # 10 digits or +91 form
 
 
+# Static OTP users (add near OTP config section)
+STATIC_OTP_USERS = {
+    "web:+919876543210": "123456",
+    "web:+911234567890": "999999",
+}
+
+
 @app.post('/api/send-otp')
 async def api_send_otp(req: SendOtpRequest, request: Request):
-    """Send a 6-digit OTP. Rate-limited per phone.
-    - Production: Twilio Verify handles code generation, delivery, expiry.
-    - Dev mode: generates local code and prints to server console.
     """
+    Send OTP API
+
+    - Specific numbers can use static OTP
+    - Other users use Twilio/local OTP flow
+    """
+
     phone = _normalize_phone(req.phone)
 
-    # Rate limit — prevent abuse (tracked locally regardless of provider)
+    # ─────────────────────────────────────────────
+    # STATIC OTP BYPASS
+    # ─────────────────────────────────────────────
+    if phone in STATIC_OTP_USERS:
+
+        logging.info(
+            f"📱 Static OTP requested for {phone} | "
+            f"OTP = {STATIC_OTP_USERS[phone]}"
+        )
+
+        return {
+            'sent': True,
+            'phone': phone,
+            'expires_in': OTP_TTL_SEC,
+            'dev_mode': True,
+            'provider': 'static_otp',
+            'message': 'Static OTP enabled for this number'
+        }
+
+    # ─────────────────────────────────────────────
+    # RATE LIMIT CHECK
+    # ─────────────────────────────────────────────
     if count_recent_otps(phone) >= OTP_RATE_LIMIT_MAX:
         raise HTTPException(
             status_code=429,
             detail="Too many OTP requests. Please wait before trying again."
         )
 
-    # Persist the request for rate-limit tracking (and for dev-mode code)
-    ip  = request.client.host if request.client else ''
+    # ─────────────────────────────────────────────
+    # CREATE OTP
+    # ─────────────────────────────────────────────
+    ip = request.client.host if request.client else ''
+
     otp = create_otp(phone, ip=ip)
+
     to_e164 = _phone_to_e164(phone)
 
+    # ─────────────────────────────────────────────
+    # SEND OTP
+    # ─────────────────────────────────────────────
     if OTP_USE_VERIFY:
+
         ok, err = _verify_send(to_e164)
+
         if not ok:
-            raise HTTPException(status_code=502, detail=f"Could not send OTP: {err}")
+            raise HTTPException(
+                status_code=502,
+                detail=f"Could not send OTP: {err}"
+            )
+
     else:
         _dev_log_otp(to_e164, otp['code'])
 
+    # ─────────────────────────────────────────────
+    # RESPONSE
+    # ─────────────────────────────────────────────
     return {
-        'sent':       True,
-        'phone':      phone,
+        'sent': True,
+        'phone': phone,
         'expires_in': OTP_TTL_SEC,
-        'dev_mode':   not OTP_USE_VERIFY,
-        'provider':   'twilio_verify' if OTP_USE_VERIFY else 'local_dev',
+        'dev_mode': not OTP_USE_VERIFY,
+        'provider': 'twilio_verify' if OTP_USE_VERIFY else 'local_dev',
     }
-
 
 class VerifyOtpRequest(BaseModel):
     phone: str
     code:  str
 
-
 @app.post('/api/verify-otp')
 async def api_verify_otp(req: VerifyOtpRequest):
-    """Verify a 6-digit OTP. Must be called before /api/login."""
+    """
+    Verify OTP API
+
+    - Static OTP users bypass verification
+    - Other users use Twilio/local verification
+    """
+
     phone = _normalize_phone(req.phone)
     code  = (req.code or '').strip()
 
+    # ─────────────────────────────────────────────
+    # VALIDATE FORMAT
+    # ─────────────────────────────────────────────
     if not code.isdigit() or len(code) != 6:
-        raise HTTPException(status_code=400, detail='OTP must be 6 digits')
+        raise HTTPException(
+            status_code=400,
+            detail='OTP must be 6 digits'
+        )
 
+    # ─────────────────────────────────────────────
+    # STATIC OTP VERIFICATION
+    # ─────────────────────────────────────────────
+    if phone in STATIC_OTP_USERS:
+
+        expected_code = STATIC_OTP_USERS[phone]
+
+        if code == expected_code:
+
+            logging.info(f"✅ Static OTP verified for {phone}")
+
+            # Create local verified session
+            from moneybook_db import db as _mdb
+            from datetime import datetime
+
+            now = datetime.utcnow()
+
+            _mdb.otp_codes.insert_one({
+                "phone":       phone,
+                "code":        "(static)",
+                "created_at":  now,
+                "expires_at":  now,
+                "attempts":    1,
+                "verified":    True,
+                "verified_at": now,
+                "consumed":    False,
+                "provider":    "static_otp",
+            })
+
+            return {
+                'verified': True,
+                'phone': phone,
+                'provider': 'static_otp'
+            }
+
+        raise HTTPException(
+            status_code=401,
+            detail='invalid'
+        )
+
+    # ─────────────────────────────────────────────
+    # TWILIO VERIFY FLOW
+    # ─────────────────────────────────────────────
     if OTP_USE_VERIFY:
+
         to_e164 = _phone_to_e164(phone)
+
         ok, status = _verify_check(to_e164, code)
+
         if not ok:
+
             err_map = {
                 'expired':              'expired',
                 'max_attempts_reached': 'too_many_attempts',
                 'canceled':             'no_otp',
                 'pending':              'invalid',
             }
+
             err_key = err_map.get(status, 'invalid')
+
             status_code = {
                 'expired':            410,
                 'too_many_attempts':  429,
                 'no_otp':             410,
                 'invalid':            401,
             }[err_key]
-            raise HTTPException(status_code=status_code, detail=err_key)
 
-        # Mark this phone as verified locally so /api/login can proceed
+            raise HTTPException(
+                status_code=status_code,
+                detail=err_key
+            )
+
+        # Save verified session locally
         from moneybook_db import db as _mdb
         from datetime import datetime
+
         now = datetime.utcnow()
+
         _mdb.otp_codes.insert_one({
             "phone":       phone,
             "code":        "(twilio)",
@@ -1189,19 +1301,35 @@ async def api_verify_otp(req: VerifyOtpRequest):
             "consumed":    False,
             "provider":    "twilio_verify",
         })
+
+    # ─────────────────────────────────────────────
+    # LOCAL DEV MODE FLOW
+    # ─────────────────────────────────────────────
     else:
-        # Local / dev-mode code verification
+
         ok, err_key = verify_otp_code(phone, code)
+
         if not ok:
+
             status_code = {
                 'no_otp':             410,
                 'expired':            410,
                 'too_many_attempts':  429,
                 'invalid':            401,
             }.get(err_key, 400)
-            raise HTTPException(status_code=status_code, detail=err_key or 'verify failed')
 
-    return {'verified': True, 'phone': phone}
+            raise HTTPException(
+                status_code=status_code,
+                detail=err_key or 'verify failed'
+            )
+
+    # ─────────────────────────────────────────────
+    # SUCCESS RESPONSE
+    # ─────────────────────────────────────────────
+    return {
+        'verified': True,
+        'phone': phone
+    }
 
 
 # ─────────────────────────────────────────────────────────────────
